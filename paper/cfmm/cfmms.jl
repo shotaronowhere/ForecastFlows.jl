@@ -22,6 +22,14 @@ function CF.find_arb!(x::Vector{T}, e::Uniswap{T}, η::Vector{T}) where T
 
     R, γ = e.R, e.γ
     k = R[1]*R[2]
+
+    # no trade condition
+    price = R[2]/R[1]
+    if γ*price ≤ η[1]/η[2] && η[1]/η[2] ≤ price
+        x .= zero(T)
+        return nothing
+    end
+
     x[1] = prod_arb_λ(η[1]/η[2], R[1], k, γ) - prod_arb_δ(η[2]/η[1], R[1], k, γ)
     x[2] = prod_arb_λ(η[2]/η[1], R[2], k, γ) - prod_arb_δ(η[1]/η[2], R[2], k, γ)
     return nothing
@@ -72,6 +80,15 @@ function CF.find_arb!(x::Vector{T}, e::Balancer{T}, η::Vector{T}) where T
 
     R, γ, w = e.R, e.γ, e.w
     ratio = w/(1-w)
+
+    # no trade condition
+    price = ratio * R[2]/R[1]
+    if γ*price ≤ η[1]/η[2] && η[1]/η[2] ≤ price
+        x .= zero(T)
+        return nothing
+    end
+
+
     x[1] = geom_arb_λ(η[1]/η[2], R[1], R[2], 1/ratio, γ) - geom_arb_δ(η[2]/η[1], R[2], R[1], ratio, γ)
     x[2] = geom_arb_λ(η[2]/η[1], R[2], R[1], ratio, γ) - geom_arb_δ(η[1]/η[2], R[1], R[2], 1/ratio, γ)
     return nothing
@@ -95,31 +112,67 @@ struct BalancerThreePool{T} <: CFMM{T}
     R::Vector{T}
     γ::T
     Ai::Vector{Int}
-    optimizer
 
     function BalancerThreePool(R::Vector{T}, γ::T, Ai::Vector{Int}) where T <: AbstractFloat
         length(R) != 3 && ArgumentError("R must be of length 2")
         length(Ai) != 3 && ArgumentError("Ai must be of length 2")
 
-        optimizer = Model(Mosek.Optimizer)
-        set_silent(optimizer)
-        @variable(optimizer, Δ[1:3] .≥ 0)
-        @variable(optimizer, Λ[1:3] .≥ 0)
-
-        k = geomean(R)
-        @constraint(optimizer, [k; R + γ*Δ - Λ] ∈ MOI.GeometricMeanCone(3+1))
-
-        return new{T}(R, γ, Ai, optimizer)
+        #TODO: implement for γ ≠ 1.0
+        return new{T}(R, 1.0, Ai)
     end
 end
 
-function CF.find_arb!(x::Vector{T}, e::BalancerThreePool{T}, η::Vector{T}) where T
-    # See App. A of "An Analysis of Uniswap Markets"
-    m = e.optimizer
-    @objective(m, Max, dot(η, m[:Λ] - m[:Δ]))
-    optimize!(m)
-    x .= value.(m[:Λ] - m[:Δ])
+function find_arb!(x::Vector{T}, e::BalancerThreePool{T}, η::Vector{T}; max_iter=100) where T
+    # See S2.5 of Improved Price Oracles
+    # 1st check no trade interval?
+    lb = sqrt(eps())
+    ub = 1.0
+
+    # find ub:
+    while evaluate_dgλ!(x, ub, e, η) < 0
+        ub *= 2
+    end
+    
+    # find λ using bisection
+    iter = 1
+    while ub - lb > 1e-7 && iter < max_iter
+        λ = (lb + ub) / 2
+        if evaluate_dgλ!(x, λ, e, η) < 0
+            lb = λ
+        else
+            ub = λ
+        end
+        iter += 1
+    end
+    
     return nothing
+end
+
+function evaluate_gλ!(x::Vector{T}, λ::T, e::BalancerThreePool{T}, η::Vector{T}) where T
+    R = e.R
+    n = length(R)
+
+    # Can easily be extended into the case with γ ∈ (0, 1)
+    # Δ = @. max(zero(T), λ / η - R)
+    # Λ = @. min(R, max(zero(T), R - λ / η))
+    # x = Λ - Δ
+
+    @. x = R - λ / η
+    k = log(R[1] * R[2] * R[3])
+    
+    ret = dot(η, x) + λ * ( sum(i -> log(R[i] - x[i]), 1:n) - k)
+    return ret
+end
+
+function evaluate_dgλ!(x::Vector{T}, λ::T, e::BalancerThreePool{T}, η::Vector{T}) where T
+    R = e.R
+    @. x = R - λ / η
+    k = log(R[1] * R[2] * R[3])
+
+    # ret = sum(i -> log(λ / η[i]), 1:length(η)) - k
+    ret = 3log(λ) - log(η[1]*η[2]*η[3]) - k
+
+    return ret
 end
 
 function valid_trade(cfmm::BalancerThreePool{T}, Δ::Vector{T}, Λ::Vector{T}) where T
