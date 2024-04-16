@@ -13,7 +13,7 @@ const CF = ConvexFlows
 
 const FIGPATH = joinpath(@__DIR__, "..", "figures")
 const SAVEPATH = joinpath(@__DIR__, "..", "data")
-const SAVEFILE = joinpath(SAVEPATH, "arbitrage.jld2")
+const SAVEFILE = joinpath(SAVEPATH, "arbitrage-gamma.jld2")
 
 include("cfmms.jl")
 include("objectives.jl")
@@ -68,8 +68,6 @@ end
 
 function run_trial(m; rseed=1, verbose=false)
     n = round(Int, 2*sqrt(m))
-    cfmms = build_pools(m, n; swap_only=true, rseed=rseed)
-    verbose && @info "  Finished building graph..."
     
     # Objective function
     min_price = 1e-2
@@ -77,6 +75,9 @@ function run_trial(m; rseed=1, verbose=false)
     Random.seed!(rseed)
     c = rand(n) .* (max_price - min_price) .+ min_price
     Uy = ArbitragePenalty(c)
+
+    cfmms = build_pools(m, n; swap_only=true, rseed=rseed)
+    verbose && @info "  Finished building problem..."
     
     # Mosek
     Vis_zero = true
@@ -215,4 +216,4 @@ plot!(
     seriestype=:scatter,
     markersize=3,
 )
-savefig(time_plt, joinpath(FIGPATH, "cfmm-time.pdf"))
+savefig(time_plt, joinpath(FIGPATH, "cfmm-time-gamma.pdf"))

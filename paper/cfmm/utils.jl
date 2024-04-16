@@ -8,7 +8,7 @@ function valid_trades(cfmms; xs=nothing, Δs=nothing, Λs=nothing)
     end
 
     for (i, cfmm) in enumerate(cfmms)
-        !valid_trade(cfmm, Δs[i], Λs[i]) && (println(i); true) && return false
+        !valid_trade(cfmm, Δs[i], Λs[i]) && (println(i, ":\t", typeof(cfmm)); true) && return false
     end
     return true
 end

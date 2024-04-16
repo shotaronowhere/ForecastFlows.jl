@@ -113,14 +113,14 @@ plot!(
     linewidth=2,
     linestyle=:dash,
 )
-savefig(iter_conv_plt, joinpath(FIGPATH, "cfmm-iter-conv.pdf"))
+savefig(iter_conv_plt, joinpath(FIGPATH, "cfmm-iter-conv-2.pdf"))
 
 
 # ******************************************************************************
 # With Vᵢ's
 # ******************************************************************************
 Vis_zero = false
-time, pstar = run_trial_jump(
+time, pstar_vi = run_trial_jump(
     cfmms, 
     c; 
     Vis_zero=Vis_zero, 
@@ -136,8 +136,8 @@ s_vi = Solver(
     n=n
 )
 
-ITERS_NEEDED_VI = 893
-trials = 10:10:ITERS_NEEDED_VI
+ITERS_NEEDED_VI = 980
+trials = 10:20:ITERS_NEEDED_VI
 TRIAL_LENGTH = length(trials)
 # ITERS_NEEDED_VI = 100
 dual_gaps_vi = zeros(TRIAL_LENGTH+1)
@@ -147,10 +147,12 @@ dual_gaps_vi[1] = NaN
 feas_violations_vi[1] = NaN
 obj_diffs_vi[1] = (pstar - U(Uy, zeros(n))) / max(abs(pstar), abs(U(Uy, zeros(n))))
 
+# CF.solve!(s_vi, verbose=true, factr=1e1, memory=10, max_iter=1000)
+
 # Hack to get iterations out of LBFGSB.jl
 for (ind, max_iter) in enumerate(trials)
     GC.gc()
-    CF.solve!(s_vi, verbose=false, factr=1e1, memory=5, max_iter=max_iter)
+    CF.solve!(s_vi, verbose=false, factr=1e1, memory=10, max_iter=max_iter)
     p_iter = U(Uy, s_vi.y) + sum(U(Vis[i], s_vi.xs[i]) for i in 1:m)
     rp = norm(max.(-s_vi.y, 0.0)) / norm(s_vi.y)
     d_iter = Ubar(Uy, s_vi.ν) + 
@@ -211,4 +213,4 @@ plot!(
     linewidth=2,
     linestyle=:dash,
 )
-savefig(iter_conv_plt_vi, joinpath(FIGPATH, "cfmm-vi-iter-conv.pdf"))
+savefig(iter_conv_plt_vi, joinpath(FIGPATH, "cfmm-vi-iter-conv-2.pdf"))
