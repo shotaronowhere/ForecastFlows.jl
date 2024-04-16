@@ -120,7 +120,7 @@ function solve!(
     if !s.Vis_zero
         ind = s.n + 1
         for i in 1:s.m
-            s.μ0[ind:ind+nis[1]-1] .= s.μ0[1:s.n][s.edges[i].Ai]
+            s.μ0[ind:ind+nis[i]-1] .= s.μ0[1:s.n][s.edges[i].Ai]
             ind += nis[i]
         end
     end
