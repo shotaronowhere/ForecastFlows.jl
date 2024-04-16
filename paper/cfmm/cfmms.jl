@@ -23,12 +23,12 @@ function CF.find_arb!(x::Vector{T}, e::Uniswap{T}, η::Vector{T}) where T
     R, γ = e.R, e.γ
     k = R[1]*R[2]
 
-    # no trade condition
-    price = R[2]/R[1]
-    if γ*price ≤ η[1]/η[2] && η[1]/η[2] ≤ price
-        x .= zero(T)
-        return nothing
-    end
+    # # no trade condition
+    # price = R[2]/R[1]
+    # if γ*price ≤ η[1]/η[2] && η[1]/η[2] ≤ price
+    #     x .= zero(T)
+    #     return nothing
+    # end
 
     x[1] = prod_arb_λ(η[1]/η[2], R[1], k, γ) - prod_arb_δ(η[2]/η[1], R[1], k, γ)
     x[2] = prod_arb_λ(η[2]/η[1], R[2], k, γ) - prod_arb_δ(η[1]/η[2], R[2], k, γ)
@@ -81,12 +81,12 @@ function CF.find_arb!(x::Vector{T}, e::Balancer{T}, η::Vector{T}) where T
     R, γ, w = e.R, e.γ, e.w
     ratio = w/(1-w)
 
-    # no trade condition
-    price = ratio * R[2]/R[1]
-    if γ*price ≤ η[1]/η[2] && η[1]/η[2] ≤ price
-        x .= zero(T)
-        return nothing
-    end
+    # # no trade condition
+    # price = ratio * R[2]/R[1]
+    # if γ*price ≤ η[1]/η[2] && η[1]/η[2] ≤ price
+    #     x .= zero(T)
+    #     return nothing
+    # end
 
 
     x[1] = geom_arb_λ(η[1]/η[2], R[1], R[2], 1/ratio, γ) - geom_arb_δ(η[2]/η[1], R[2], R[1], ratio, γ)
@@ -122,10 +122,20 @@ struct BalancerThreePool{T} <: CFMM{T}
     end
 end
 
-function find_arb!(x::Vector{T}, e::BalancerThreePool{T}, η::Vector{T}; max_iter=100) where T
+function CF.find_arb!(x::Vector{T}, e::BalancerThreePool{T}, η::Vector{T}; max_iter=100) where T
     # See S2.5 of Improved Price Oracles
     # 1st check no trade interval?
-    lb = sqrt(eps())
+    R = e.R
+    λstar = (R[1]*R[2]*R[3]*η[1]*η[2]*η[3])^(1/3)
+    @. x = R - λstar / η
+    
+    return nothing
+end
+
+function find_arb_iter!(x::Vector{T}, e::BalancerThreePool{T}, η::Vector{T}; max_iter=100) where T
+    # See S2.5 of Improved Price Oracles
+    # 1st check no trade interval?
+    lb = 0.0
     ub = 1.0
 
     # find ub:
@@ -133,9 +143,9 @@ function find_arb!(x::Vector{T}, e::BalancerThreePool{T}, η::Vector{T}; max_ite
         ub *= 2
     end
     
-    # find λ using bisection
+    # find λ using Newton method
     iter = 1
-    while ub - lb > 1e-7 && iter < max_iter
+    while ub - lb > sqrt(eps()) && iter < max_iter
         λ = (lb + ub) / 2
         if evaluate_dgλ!(x, λ, e, η) < 0
             lb = λ
@@ -144,6 +154,7 @@ function find_arb!(x::Vector{T}, e::BalancerThreePool{T}, η::Vector{T}; max_ite
         end
         iter += 1
     end
+    iter == max_iter && @warn "Max iteration reached in find_arb!"
     
     return nothing
 end
@@ -179,7 +190,8 @@ function valid_trade(cfmm::BalancerThreePool{T}, Δ::Vector{T}, Λ::Vector{T}) w
     R, γ = cfmm.R, cfmm.γ
     ϕR = geomean(R)
     Rp = @. R + γ * Δ - Λ
-    return all(Δ .≥ 0) && all(Λ .≥ 0) && all(Rp .≥ 0) && geomean(Rp) ≥ ϕR - sqrt(eps(T))
+    # @show Δ, Λ, geomean(Rp), ϕR
+    return all(Δ .≥ 0) && all(Λ .≥ 0) && all(Rp .≥ 0) && geomean(Rp) ≥ ϕR - 1e-6
 end
 
 function price(::BalancerThreePool{T}, Rp::Vector{T}) where T
