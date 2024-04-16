@@ -99,6 +99,8 @@ iter_conv_plt = plot(
     guidefontsize=12,
     legendtitlefontsize=12,
     dpi=300,
+    size=(800, 300),
+    bottom_margin=5Plots.mm,
 )
  plot!(
     iter_conv_plt,

@@ -8,3 +8,4 @@ dev/
 *iterate.dat
 paper/figures/*
 paper/data/*
+*dev*.jl
