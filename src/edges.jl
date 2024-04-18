@@ -14,7 +14,7 @@ struct EdgeGain{T} <: Edge{T}
     ub::T
 end
 function Edge(
-    inds::Tuple{Int, Int},
+    inds::Tuple{Int, Int};
     h::Function,
     ub::T,
 ) where T
@@ -60,7 +60,22 @@ function find_arb!(x::Vector{T}, e::EdgeClosedForm{T}, ratio::T) where T
     return nothing
 end
 
-# let x = (x₁, x₂) be the solution to h'(x₁) - η₁/η₂ = 0
+# let x = (-x₁, h(x₁)) be the solution to h'(x₁) - η₁/η₂ = 0
+# raito = η₁/η₂
 function find_arb!(x::Vector{T}, e::EdgeGain{T}, ratio::T) where T
-    # TODO: Newton's method or bisection
+    # Truncated Netwon's method
+    x[1] = e.ub / 2
+    for _ in 1:20
+        dh = ForwardDiff.derivative(e.h, x[1])
+        d2h = ForwardDiff.derivative(x -> ForwardDiff.derivative(e.h, x), x[1])
+        Δ = (ratio - dh) / d2h
+        x[1] += Δ
+        x[1] = clamp(x[1], 0.0, e.ub)
+
+        abs(Δ) ≤ 1e-8 && break
+    end
+
+    x[1] = -x[1]
+    x[2] = e.h(-x[1])
+    return nothing
 end

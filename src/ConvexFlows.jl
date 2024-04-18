@@ -1,6 +1,7 @@
 module ConvexFlows
 
 using LinearAlgebra, SparseArrays, StaticArrays
+using ForwardDiff
 using LBFGSB
 using Printf
 
