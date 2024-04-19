@@ -36,10 +36,10 @@ function Solver(;
 
     # setup solver variables for primal and dual
     y = zeros(T, n)
-    xs = [zeros(T, length(e.Ai)) for e in edges]
+    xs = convert(Vector{Vector{T}}, [zeros(T, length(e.Ai)) for e in edges])
     ν = zeros(T, n)
-    ηs = [zeros(T, length(e.Ai)) for e in edges]
-    arb_prices = [zeros(T, length(e.Ai)) for e in edges]
+    ηs = convert(Vector{Vector{T}}, [zeros(T, length(e.Ai)) for e in edges])
+    arb_prices = convert(Vector{Vector{T}}, [zeros(T, length(e.Ai)) for e in edges])
     Vis_zero = isnothing(edge_objectives) ? true : false
     μ0 = zeros(T, Vis_zero ? n : n + sum([length(e.Ai) for e in edges]))
     

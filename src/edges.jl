@@ -13,13 +13,6 @@ struct EdgeGain{T} <: Edge{T}
     h::Function
     ub::T
 end
-function Edge(
-    inds::Tuple{Int, Int};
-    h::Function,
-    ub::T,
-) where T
-    return EdgeGain{T}(inds, h, ub)
-end
 
 # Edge with closed form solution
 struct EdgeClosedForm{T} <: Edge{T}
@@ -32,8 +25,10 @@ function Edge(
     inds::Tuple{Int, Int};
     h::Function,
     ub::T,
-    wstar::Function,
+    wstar::Union{Function, Nothing}=nothing,
 ) where T
+    isnothing(wstar) && return EdgeGain{T}(inds, h, ub)
+
     return EdgeClosedForm{T}(inds, h, ub, wstar)
 end
 
