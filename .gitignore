@@ -3,9 +3,16 @@
 *.jl.mem
 .DS_Store
 Manifest.toml
-dev/
 .vscode/
+dev/
+*dev*.jl
+
+# Paper stuff
 *iterate.dat
 paper/figures/*
 paper/data/*
-*dev*.jl
+
+# Docs
+/docs/build/
+/docs/src/examples/
+/docs/src/advanced/
