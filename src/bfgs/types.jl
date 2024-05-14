@@ -167,6 +167,7 @@ end
     eps_g_norm::Float64 = 1e-6
     num_threads::Int = Sys.CPU_THREADS
     μ::Float64 = 10
+    final_print::Bool = true
 end
 
 

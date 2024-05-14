@@ -65,6 +65,7 @@ function U(obj::NonpositiveQuadratic{T}, y) where T
     return -0.5*sum(x->abs2(max(x, zero(T))), sqrt.(obj.a) .* obj.b .- y)
 end
 
+# Ū(ν) = sup_y {U(y) - ν'y}
 function Ubar(obj::NonpositiveQuadratic{T}, ν) where T
     return 0.5*sum(abs2, ν ./ sqrt.(obj.a)) - dot(obj.b, ν)
 end
@@ -72,6 +73,33 @@ end
 function ∇Ubar!(g, obj::NonpositiveQuadratic{T}, ν) where T
     @. g = ν / obj.a - obj.b
     return nothing
+end
+
+struct Markowitz{T} <: Objective
+    μ::Vector{T}
+    Σ
+end
+
+Base.length(obj::Markowitz) = length(obj.μ)
+
+function U(obj::Markowitz{T}, y) where T
+    return dot(obj.μ, y) - 0.5*dot(y, obj.Σ*y)
+end
+
+function Ubar(obj::Markowitz{T}, ν) where T
+    tmp = obj.Σ \ (obj.μ - ν)
+    return 0.5 * dot(obj.μ - ν, tmp)
+end
+
+function ∇Ubar!(g, obj::Markowitz{T}, ν) where T
+    g .= obj.Σ \ (ν - obj.μ)
+    return nothing
+end
+
+# TODO: A bit of a hack right now. Should add to solver
+function LinearNonnegative(c::Vector{T}) where T
+    all(c .>= 0) || throw(ArgumentError("all elements must be strictly positive"))
+    return Markowitz(c, sqrt(eps())*I)
 end
 
 # TODO: Linear, nonnegative quadratic

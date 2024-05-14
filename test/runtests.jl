@@ -1,7 +1,7 @@
 using ConvexFlows
 using Test
 
-using LinearAlgebra, Random
+using LinearAlgebra, Random, SparseArrays
 using LogExpFunctions
 using ForwardDiff
 
@@ -15,4 +15,8 @@ end
 
 @testset "(L)BFGS" begin
     include("bfgs.jl")
+end
+
+@testset "solver-bfgs" begin
+    include("solver_bfgs.jl")
 end

@@ -59,6 +59,18 @@ end
 # raito = η₁/η₂
 function find_arb!(x::Vector{T}, e::EdgeGain{T}, ratio::T) where T
     # Truncated Netwon's method
+    p_min = ForwardDiff.derivative(e.h, e.ub)
+    p_max = ForwardDiff.derivative(e.h, 0.0)
+    if isinf(ratio) || ratio ≥ p_max
+        x[1] = 0.0
+        x[2] = e.h(0.0)
+        return nothing
+    elseif ratio ≤ p_min
+        x[1] = -e.ub
+        x[2] = e.h(e.ub)
+        return nothing
+    end
+    
     x[1] = e.ub / 2
     for _ in 1:20
         dh = ForwardDiff.derivative(e.h, x[1])

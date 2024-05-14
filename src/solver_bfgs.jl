@@ -76,7 +76,7 @@ function solve!(
     pres = norm(problem.y - yhat)
 
     options.verbose && @printf("\nDual problem solve status:\n")
-    display(result)
+    options.final_print && display(result)
     options.verbose && @printf("Primal feasibility ||y - ∑Aᵢxᵢ||: %.4e\n", pres)
     return result
 end
