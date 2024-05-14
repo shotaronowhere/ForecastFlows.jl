@@ -48,6 +48,8 @@ Returns a vector with length `length(ν)` (number of nodes).
 """
 function upper_limit end
 
+lower_limit(obj::Objective) = zeros(length(obj)) .+ sqrt(eps())
+upper_limit(obj::Objective) = convert(Inf) .+ zeros(length(obj))
 
 # quadratic cost: u(y) = -0.5*(-y + b)₊²
 struct NonpositiveQuadratic{T} <: Objective

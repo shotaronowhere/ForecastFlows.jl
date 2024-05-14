@@ -87,15 +87,36 @@ Random.seed!(1)
         n=n,
     )
     solve!(s, verbose=false, memory=5)
-    ν = s.ν
     all(s.y .≥ -1e-5)       # pfeas
-    subopt = 0.0
     for (i, cfmm) in enumerate(cfmms)
         Δ = max.(-s.xs[i], 0.0)
         Λ = max.(s.xs[i], 0.0)
         Rp = cfmm.R + cfmm.γ * Δ - Λ
 
-        νi =  ν[cfmm.Ai][1] / ν[cfmm.Ai][2]
+        νi =  s.ν[cfmm.Ai][1] / s.ν[cfmm.Ai][2]
+        p = Rp[2] / Rp[1]
+        subopt_i = max(max(νi * cfmm.γ - p, 0.0), max(p - νi, 0.0))
+        @test subopt_i ≤ 1e-2
+    end
+
+    # with edge costs
+    Vis = [NonpositiveQuadratic(zeros(2)) for cfmm in cfmms]
+    s_vi = Solver(
+        flow_objective=Uy,
+        edge_objectives=Vis,
+        edges=cfmms,
+        n=n
+    )
+    solve!(s_vi, verbose=false, memory=5)
+
+    all(s_vi.y .≥ -1e-5)       # pfeas
+    for (i, cfmm) in enumerate(cfmms)
+        Δ = max.(-s_vi.xs[i], 0.0)
+        Λ = max.(s_vi.xs[i], 0.0)
+        Rp = cfmm.R + cfmm.γ * Δ - Λ
+        η = s_vi.ηts[i] .+ s_vi.ν[cfmm.Ai]
+
+        νi =  η[1] / η[2]
         p = Rp[2] / Rp[1]
         subopt_i = max(max(νi * cfmm.γ - p, 0.0), max(p - νi, 0.0))
         @test subopt_i ≤ 1e-2
