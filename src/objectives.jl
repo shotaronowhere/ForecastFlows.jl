@@ -30,6 +30,7 @@ function Ubar end
 Computes the gradient of [`Ubar(obj, ν)`](@ref) at ν.
 """
 function grad_Ubar! end
+grad_Ubar!(g, obj::Objective, ν) = ∇Ubar!(g, obj, ν)
 
 @doc raw"""
     lower_limit(obj)
