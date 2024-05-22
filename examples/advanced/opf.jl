@@ -193,7 +193,7 @@ function gain(w::T, e::TransmissionLine{T}) where T
     return w - (α * (log1pexp(β * w) - log(2))  - 2w)
 end
 
-function CF.find_arb!(x::Vector{T}, e::TransmissionLine{T}, η::Vector{T}) where T
+function CF.find_arb!(x::Vector{T}, e::TransmissionLine{T}, η::AbstractVector{T}) where T
     η1, η2 = η[1], η[2]
     x[1] = -clamp(1/e.β * log((3η2 - η1)/(η2 + η1)), zero(T), e.b)
     x[2] = gain(-x[1], e)

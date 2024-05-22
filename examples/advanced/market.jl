@@ -1,24 +1,6 @@
 #=
 # Market Clearing
 This example uses `ConvexFlows` to solve a market clearing problem
-
-
-
-```math
-    \ell(w) = \alpha \left(\log(1 + \exp(\beta w)) - \log 2\right) - 2w.
-```
-
-The output of a line is then $h(w) = w - \ell(w)$. The optimal power flow 
-problem is then to minimize the total cost (maximize its negative) subject to
-the power flow constraints and net flow constraint:
-
-```math
-\begin{aligned}
-    & \text{maximize} && -\sum_{i=1}^n (d_i - y_i)_+^2 \\
-    & \text{subject to} &&  y = \sum_{i=1}^n A_i x_i \\
-    &&& h(-(x_i)_1) \le (x_i)_2 ~ \text{for} i = 1, \dots, m. \\
-\end{aligned}
-```
 =#
 
 using ConvexFlows
