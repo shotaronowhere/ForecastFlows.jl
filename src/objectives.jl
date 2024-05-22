@@ -100,9 +100,7 @@ function ∇Ubar!(g, obj::Markowitz{T}, ν) where T
 end
 
 # TODO: A bit of a hack right now. Should add to solver
-function LinearNonnegative(c::Vector{T}) where T
+function Linear(c::Vector{T}) where T
     all(c .>= 0) || throw(ArgumentError("all elements must be strictly positive"))
     return Markowitz(c, sqrt(eps())*I)
 end
-
-# TODO: Linear, nonnegative quadratic

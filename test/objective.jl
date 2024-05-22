@@ -32,8 +32,8 @@ end
 end
 
 
-@testset "linear nonnegative" begin
-    obj = LinearNonnegative([1.0, 2.0]./10)
+@testset "linear" begin
+    obj = Linear([1.0, 2.0]./10)
     @test U(obj, [3.0, 4.0]) ≈ 1.1 atol=obj_tol
 
     for _ in 1:5

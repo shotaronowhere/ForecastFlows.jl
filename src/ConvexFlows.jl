@@ -26,7 +26,7 @@ export BFGSSolver, BFGSOptions
 export problem
 
 # Objectives
-export NonpositiveQuadratic, LinearNonnegative, Markowitz
+export NonpositiveQuadratic, Linear, Markowitz
 export U, ∇U, Ubar, ∇Ubar
 
 # Edges
