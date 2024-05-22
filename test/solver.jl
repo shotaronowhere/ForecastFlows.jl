@@ -19,7 +19,7 @@ Random.seed!(1)
 
     # Solves the maximum arbitrage problem for the two-coin constant product case.
     # Assumes that v > 0 and γ > 0.
-    function ConvexFlows.find_arb!(x::Vector{T}, e::Uniswap{T}, η::Vector{T}) where T
+    function ConvexFlows.find_arb!(x::Vector{T}, e::Uniswap{T}, η::AbstractVector{T}) where T
         # See App. A of "An Analysis of Uniswap Markets"
         @inline prod_arb_δ(m, r, k, γ) = max(sqrt(γ*m*k) - r, 0.0)/γ
         @inline prod_arb_λ(m, r, k, γ) = max(r - sqrt(k/(m*γ)), 0.0)

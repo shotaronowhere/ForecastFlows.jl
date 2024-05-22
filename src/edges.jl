@@ -49,6 +49,10 @@ function find_arb!(
 end
 
 
+function find_arb!(x::Vector{T}, e::Union{EdgeGain{T}, EdgeClosedForm{T}}, ν::AbstractVector{T}) where {T}
+    find_arb!(x, e, ν[1] / ν[2])
+end
+
 function find_arb!(x::Vector{T}, e::EdgeClosedForm{T}, ratio::T) where T
     x[1] = -e.wstar(ratio)
     x[2] = e.h(-x[1])

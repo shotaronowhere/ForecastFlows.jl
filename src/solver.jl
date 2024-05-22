@@ -63,7 +63,7 @@ function find_arb!(s::Solver{T}) where T
     Threads.@threads for i in 1:length(s.xs)
         if s.Vis_zero
             # s.arb_prices[i] .= s.ν[s.edges[i].Ai] 
-            find_arb!(s.xs[i], s.edges[i], s.ν[s.edges[i].Ai])
+            find_arb!(s.xs[i], s.edges[i], view(s.ν, SVector{length(s.edges[i])}(s.edges[i].Ai)))
         else
             s.arb_prices[i] .= s.ηts[i] .+ s.ν[s.edges[i].Ai]
             find_arb!(s.xs[i], s.edges[i], s.arb_prices[i])
@@ -143,7 +143,7 @@ function solve!(
         acc = zero(T)
         for i in 1:s.m
             if s.Vis_zero
-                @views acc += dot(s.xs[i], s.ν[s.edges[i].Ai])
+                @views acc += dot(s.xs[i], view(s.ν, SVector{length(s.edges[i])}(s.edges[i].Ai)))
             else
                 acc += Ubar(s.edge_objectives[i], s.ηts[i])
                 @views acc += dot(s.xs[i], s.arb_prices[i])
@@ -162,7 +162,8 @@ function solve!(
         ind = s.n + 1
         for i in 1:s.m
             # add to ∇_ν
-            @views g[s.edges[i].Ai] .+= s.xs[i]
+            view(g, SVector{length(s.edges[i])}(s.edges[i].Ai)) .+= s.xs[i]
+            # @views g[s.edges[i].Ai] .+= s.xs[i]
 
             if !s.Vis_zero
                 ni = length(s.edges[i])
@@ -225,7 +226,8 @@ end
 function netflows!(s::Solver{T}) where T
     s.y .= zero(T)
     for (x, e) in zip(s.xs, s.edges)
-        @views s.y[e.Ai] .+= x
+        view(s.y, SVector{length(e.Ai)}(e.Ai)) .+= x
+        # @views s.y[e.Ai] .+= x
     end
     return nothing
 end
