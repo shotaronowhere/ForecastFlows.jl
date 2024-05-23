@@ -6,4 +6,5 @@
 
 This package is experimental academic software for the paper [Convex Network Flows](https://arxiv.org/abs/2404.00765).
 
-More soon...
+Please check out the [Documentation](https://tjdiamandis.github.io/ConvexFlows.jl/dev/) for more information.
+Also check out the related package [`CFMMRouter.jl`](https://github.com/bcc-research/CFMMRouter.jl)

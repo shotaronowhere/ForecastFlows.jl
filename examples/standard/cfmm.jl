@@ -1,6 +1,6 @@
 #=
-# Market Clearing
-This example uses `ConvexFlows` to solve a market clearing problem
+# CFMM Routing
+This example uses `ConvexFlows` to solve a CFMM order routing problem
 
 =#
 
@@ -35,6 +35,13 @@ Random.seed!(1)
 Rs = [10*rand(2) for _ in 1:length(edge_inds)]
 f(δ, R1, R2) = R2*δ/(R1 + δ)
 
+cfmms = Edge[]
+for (i, inds) in enumerate(edge_inds)
+    i1, i2 = inds
+    push!(cfmms, Edge((i1, i2); h=δ->f(δ, Rs[i][1], Rs[i][2]), ub=1e6))
+    push!(cfmms, Edge((i2, i1); h=δ->f(δ, Rs[i][2], Rs[i][1]), ub=1e6))
+end
+
 graph = GraphPlot.gplot(
     Graph(Adj),
     nodefillc="black",
@@ -46,13 +53,6 @@ graph = GraphPlot.gplot(
     edgelabelc="white",
 )
 
-
-cfmms = Edge[]
-for (i, inds) in enumerate(edge_inds)
-    i1, i2 = inds
-    push!(cfmms, Edge((i1, i2); h=δ->f(δ, Rs[i][1], Rs[i][2]), ub=1e6))
-    push!(cfmms, Edge((i2, i1); h=δ->f(δ, Rs[i][2], Rs[i][1]), ub=1e6))
-end
 
 #=
 Next, we define a linear objective function that says we value each asset equally.
