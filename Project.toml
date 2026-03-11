@@ -1,7 +1,7 @@
 name = "ForecastFlows"
 uuid = "9bd5dfd2-158c-4d47-bd7a-911f8b978178"
 version = "0.1.1"
-authors = ["Theo Diamandis"]
+authors = ["Theo Diamandis", "ForecastFlows contributors"]
 
 [deps]
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
@@ -13,6 +13,7 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
+ForwardDiff = "1"
 LBFGSB = "0.4.1"
 SparseArrays = "1.10"
 StaticArrays = "1.9"

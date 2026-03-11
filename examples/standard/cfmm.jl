@@ -35,6 +35,7 @@ Random.seed!(1)
 Rs = [10*rand(2) for _ in 1:length(edge_inds)]
 f(δ, R1, R2) = R2*δ/(R1 + δ)
 
+# This example uses the legacy two-node `problem` / `Edge((i, j); ...)` interface.
 cfmms = Edge[]
 for (i, inds) in enumerate(edge_inds)
     i1, i2 = inds

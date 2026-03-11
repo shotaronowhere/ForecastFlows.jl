@@ -16,3 +16,11 @@ paper/data/*
 /docs/build/
 /docs/src/examples/
 /docs/src/advanced/
+
+# Local-only benchmark and assistant artifacts
+.gitmodules
+AGENTS.md
+CLAUDE.md
+Deep-Trading/
+CFMMRouter.jl/
+foresight-docs/

@@ -126,14 +126,10 @@ and stores it in the argument `x`.
 
 ### Algorithm
 We use a first-order method to solve a particular dual of the convex flow problem.
-Check out the [Algorithm]() page for details.
+Check out the [Solution method](method.md) page for details.
 
 ## Getting Started
 
 Start with the [Prediction Market Router](@ref) page for the routing extension,
 then see the [User Guide](@ref) and the example pages for the generic solver
 interfaces.
-
-
-## References
-[^1]: Diamandis, T., Angeris, G., & Edelman, A. (2024). [Convex Network Flows.](https://arxiv.org/abs/2404.00765) arXiv preprint arXiv:2404.00765.

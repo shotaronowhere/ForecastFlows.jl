@@ -11,7 +11,7 @@ for full algorithmic details.
 & x_i \in T_i
 \end{array}
 ```
-where $f$ and $g$ are assumed to be convex.
+where the objective terms are modeled by $U$ and $\{V_i\}$.
 
 
 ## References

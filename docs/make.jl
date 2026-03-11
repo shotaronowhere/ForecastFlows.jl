@@ -51,12 +51,13 @@ advanced_nav = fix_suffix.(joinpath.("advanced", readdir(joinpath(@__DIR__, "../
 
 makedocs(;
     modules=[ForecastFlows],
-    authors="Theo Diamandis",
+    authors="Theo Diamandis and ForecastFlows contributors",
     repo="https://github.com/shotaronowhere/ForecastFlows.jl/blob/{commit}{path}#L{line}",
     sitename="ForecastFlows.jl",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
         canonical="https://shotaronowhere.github.io/ForecastFlows.jl",
+        repolink="https://github.com/shotaronowhere/ForecastFlows.jl",
         assets=String[],
     ),
     pages=[

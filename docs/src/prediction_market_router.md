@@ -82,3 +82,6 @@ Deep-Trading grouped gas model is not reproduced here.
 Only the benchmark fixture data is shared with Deep-Trading. The convex solver,
 its exact split/merge hyperedge, and the replay adapter in this package are
 independent implementations.
+
+The benchmark fixtures themselves are vendored under `test/fixtures/`, with
+upstream commit provenance recorded in `test/fixtures/PROVENANCE.md`.

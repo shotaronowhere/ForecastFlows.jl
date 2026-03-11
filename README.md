@@ -40,6 +40,18 @@ The current rough fixed-charge gas proxy gives:
 This gas-adjusted value is a Julia-local approximation, not an apples-to-apples
 comparison to the Deep-Trading grouped L2/L1 gas model.
 
+The benchmark fixtures are vendored under `test/fixtures/`. External solver
+repositories are used only as provenance/reference sources and are not part of
+the public package source.
+
+## Release notes
+
+This public fork renames the package to `ForecastFlows`, adds a
+prediction-market routing extension based on convex-flow dual decomposition,
+validates raw 98-market benchmark parity against the pinned Deep-Trading
+fixture, and keeps the current gas-adjusted result explicitly scoped to a rough
+fixed-charge proxy.
+
 ## Run the benchmark
 
 Run the full test suite:
@@ -58,6 +70,20 @@ Run the opt-in raw + gas-proxy 98-market benchmark:
 
 ```bash
 FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK=1 FORECASTFLOWS_RUN_DEEPTRADING_GAS_BENCHMARK=1 julia --project -e 'using Pkg; Pkg.test()'
+```
+
+## Build docs locally
+
+Bootstrap the docs environment:
+
+```bash
+julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+```
+
+Build the docs:
+
+```bash
+julia --project=docs docs/make.jl
 ```
 
 ## Scope and limitations

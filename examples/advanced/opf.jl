@@ -210,11 +210,11 @@ end
 QuadraticPowerCost(d::Vector{T}) where T = QuadraticPowerCost(length(d), d)
 
 
-function U(obj::QuadraticPowerCost{T}, y) where T
+function CF.U(obj::QuadraticPowerCost{T}, y) where T
     return -0.5*sum(x->abs2(max(x, zero(T))), obj.d - y)
 end
 
-function grad_U(obj::QuadraticPowerCost{T}, y) where T
+function CF.grad_U(obj::QuadraticPowerCost{T}, y) where T
     return obj.d - y
 end
 
