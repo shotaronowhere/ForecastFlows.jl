@@ -1,14 +1,16 @@
 ```@meta
-CurrentModule = ConvexFlows
+CurrentModule = ForecastFlows
 ```
 
-# ConvexFlows.jl
-`ConvexFlows` is a solver for the convex flow problem, introduced by Diamandis
-et al. in [Convex Network Flows](https://arxiv.org/abs/2404.00765)[^1].
+# ForecastFlows.jl
+`ForecastFlows` is a solver for convex-flow problems on graphs and hypergraphs.
+This fork keeps the original framework from Diamandis et al. and extends the
+root solver to prediction-market trade routing with AMM edges plus a fee-free
+mint/merge hyperedge.
 
 ### Documentation Contents:
 ```@contents
-Pages = ["index.md", "method.md", "guide.md", "api.md"]
+Pages = ["index.md", "prediction_market_router.md", "method.md", "guide.md", "api.md"]
 Depth = 1
 ```
 ##### Examples:
@@ -32,7 +34,7 @@ Depth = 1
 
 ## Overview
 
-ConvexFlows solves convex optimization problems of the form
+ForecastFlows solves convex optimization problems of the form
 
 ```math
 \begin{array}{ll}
@@ -47,7 +49,28 @@ and the matrices $\{A_i\}$ map the flow over edge $i$ from the local indices to
 the global indices.
 
 
-Compared to general conic form programs, the form we use in ConvexFlows takes advantage of underlying (hyper)graph structure in these problems and facilitates custom subroutines that often provide significant speedups. To ameliorate the extra complexity, we provide a few interfaces that allow for easy problem specification.
+Compared to general conic form programs, the form we use in ForecastFlows takes advantage of underlying (hyper)graph structure in these problems and facilitates custom subroutines that often provide significant speedups. To ameliorate the extra complexity, we provide a few interfaces that allow for easy problem specification.
+
+## Prediction-market extension
+
+The prediction-market router is built on the same dual-decomposition idea:
+
+- one collateral node
+- one outcome node per market outcome
+- one AMM edge per collateral/outcome market
+- one `SplitMergeEdge` with local ordering `[collateral, outcomes...]`
+
+The recommended public interface for new work is the root solver API:
+
+- `Solver`
+- `solve!`
+- `SplitMergeEdge`
+- `EndowmentLinear`
+- `certify_solution`
+- `solve_with_fixed_gas!`
+
+The older two-node `problem` interface remains available as legacy code, but it
+is not the recommended entrypoint for prediction-market routing.
 
 ## Objective interface
 We define a few objective functions that may be used 'off the shelf', which we
@@ -106,9 +129,10 @@ We use a first-order method to solve a particular dual of the convex flow proble
 Check out the [Algorithm]() page for details.
 
 ## Getting Started
-Please see the [User Guide](@ref) for a full explanation of the solver parameter
-options. Check out the examples in the documentation, as well as the more
-advanced examples in the `paper` folder on GitHub.
+
+Start with the [Prediction Market Router](@ref) page for the routing extension,
+then see the [User Guide](@ref) and the example pages for the generic solver
+interfaces.
 
 
 ## References

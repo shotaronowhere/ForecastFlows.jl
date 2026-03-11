@@ -1,6 +1,6 @@
 [deps]
 Cairo = "159f3aea-2a34-519c-b102-8c37f9878175"
-ConvexFlows = "e6d6bbd2-f446-4b3b-b420-735d85b530c7"
+ForecastFlows = "9bd5dfd2-158c-4d47-bd7a-911f8b978178"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 GraphPlot = "a2cc645c-3eea-5389-862e-a155d0052231"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"

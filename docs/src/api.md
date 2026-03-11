@@ -4,5 +4,5 @@
 ```
 
 ```@autodocs
-Modules = [ConvexFlows]
+Modules = [ForecastFlows]
 ```
