@@ -48,7 +48,9 @@ end
 # BFGS update
 function update_Hk!(state::BFGSState{T}) where T
     Hk, sk, yk = state.Hk, state.sk, state.yk
-    ρk = 1 / dot(yk, sk)
+    curvature = dot(yk, sk)
+    curvature <= zero(T) && return nothing
+    ρk = inv(curvature)
     isnan(ρk) && return nothing
 
     Hk .= (I - ρk * sk * yk') * Hk * (I - ρk * yk * sk') + ρk * sk * sk'
@@ -97,6 +99,8 @@ end
 
 function update_Hk!(state::LBFGSState{T}) where T
     sks, yks, ind = state.sks, state.yks, state.ind[1]
+    curvature = dot(state.yk, state.sk)
+    curvature <= zero(T) && return nothing
 
     prev_ind = mod(ind-2, length(sks)) + 1
     state.γk[1] = dot(yks[prev_ind], sks[prev_ind]) / dot(yks[prev_ind], yks[prev_ind])
@@ -105,7 +109,7 @@ function update_Hk!(state::LBFGSState{T}) where T
     sks[ind] .= state.sk
     yks[ind] .= state.yk
     state.ρs[ind] = 1 / dot(yks[ind], sks[ind])
-    ind = mod(ind, length(sks)) + 1
+    state.ind[1] = mod(ind, length(sks)) + 1
     return nothing
 end
 
@@ -125,14 +129,14 @@ function line_search(solver::BFGSSolver{T}, f∇f!, p, fxk, gxk) where T
     # # TODO: faster to broadcast to cache vector and then compute max?
     tmax_x = minimum(i -> pk[i] < 0 ? -xk[i] / pk[i] : typemax(T), 1:solver.n)
     # ub0 = min(tmax_λ, tmax_x) - sqrt(eps(T))
-    ub0 = tmax_x - sqrt(eps(T))
+    ub0 = max(zero(T), tmax_x - sqrt(eps(T)))
 
     lb, ub = lb0, ub0
     @inline function hdh!(vn, α, fxk)
         @. xnext = xk + α * pk
         
         # ensures we don't step out of feasible region x ≥ 0
-        any(xi -> xi < sqrt(eps()), xnext) && return typemax(T), typemax(T)
+        any(xi -> !isfinite(xi) || xi < sqrt(eps(T)), xnext) && return typemax(T), typemax(T)
 
         fnext = f∇f!(vn, xnext, p)
         # fnext += sum(xi -> xi < sqrt(eps) ? -solver.g_norm*log(xi) : zero(T), xnext)
@@ -145,6 +149,7 @@ function line_search(solver::BFGSSolver{T}, f∇f!, p, fxk, gxk) where T
 
     # h(αk) = f(x + αk*p) - f(x)
     # looks for a weak Wolfe step
+    iszero(ub0) && return zero(T)
     αk = min(one(T), ub0)
     for _ in 1:20
         # TODO: should keep track of function evals
@@ -163,6 +168,8 @@ function line_search(solver::BFGSSolver{T}, f∇f!, p, fxk, gxk) where T
         end
 
         αk = ub < typemax(T) ? (lb + ub) / 2 : 2lb
+        αk = max(zero(T), αk)
+        iszero(αk) && break
     end
 
     return αk
@@ -231,6 +238,7 @@ function solve!(
     # *  main algorithm   *
     # *********************
     solve_time_start = time_ns()
+    stalled_steps = 0
 
     # Compute values at x0
     solver.obj_val = f∇f!(gk, xk, p)
@@ -272,7 +280,18 @@ function solve!(
 
         # --- Check convergence ---
         converged(solver, options) && break
-        
+
+        if αk <= sqrt(eps(T)) || norm(state.sk) <= sqrt(eps(T))
+            stalled_steps += 1
+        else
+            stalled_steps = 0
+        end
+        if stalled_steps >= 3
+            reset_inverse_hessian!(state)
+            stalled_steps = 0
+            continue
+        end
+
         k == 1 && isnothing(H0) && scale_H0!(state)
         update_Hk!(state)
     end

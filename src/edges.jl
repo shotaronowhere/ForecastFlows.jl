@@ -1,22 +1,23 @@
 abstract type Edge{T} end
 
 @def add_generic_fields begin
-    Ai::Vetcor{Int}
+    Ai::Vector{Int}
 end
 Base.length(e::Edge) = length(e.Ai)
 
 function find_arb! end
+is_nonsmooth(::Edge) = false
 
 # Edge with gain function
 struct EdgeGain{T} <: Edge{T}
-    Ai::Tuple{Int, Int}
+    Ai::Vector{Int}
     h::Function
     ub::T
 end
 
 # Edge with closed form solution
 struct EdgeClosedForm{T} <: Edge{T}
-    Ai::Tuple{Int, Int}
+    Ai::Vector{Int}
     h::Function
     ub::T
     wstar::Function
@@ -27,9 +28,11 @@ function Edge(
     ub::T,
     wstar::Union{Function, Nothing}=nothing,
 ) where T
-    isnothing(wstar) && return EdgeGain{T}(inds, h, ub)
+    Ai = collect(Int, inds)
 
-    return EdgeClosedForm{T}(inds, h, ub, wstar)
+    isnothing(wstar) && return EdgeGain{T}(Ai, h, ub)
+
+    return EdgeClosedForm{T}(Ai, h, ub, wstar)
 end
 
 
@@ -40,9 +43,7 @@ function find_arb!(
 ) where {T, V <: Vector{T}}
 
     Threads.@threads for i in 1:length(edges)
-        ind1 = edges[i].Ai[1]
-        ind2 = edges[i].Ai[2]
-        find_arb!(xs[i], edges[i], ν[ind1] / ν[ind2])
+        find_arb!(xs[i], edges[i], view(ν, edges[i].Ai))
     end
 
     return nothing

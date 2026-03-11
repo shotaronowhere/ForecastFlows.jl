@@ -1,6 +1,6 @@
 #=
 # Optimal Power Flow
-This example uses `ConvexFlows` to solve am optimal power flow problem.
+This example uses `ForecastFlows` to solve am optimal power flow problem.
 
 The optimal power flow problem seeks a cost-minimizing plan 
 to generate power satisfying demand in each region. We consider a network of $m$ 
@@ -27,7 +27,7 @@ the power flow constraints and net flow constraint:
 ```
 =#
 
-using ConvexFlows
+using ForecastFlows
 using Random, LinearAlgebra, SparseArrays
 using Plots, LogExpFunctions
 

@@ -6,7 +6,7 @@ import Graphs: Graph, connected_components
 using Plots, LaTeXStrings
 
 Pkg.activate(joinpath(@__DIR__, "..", ".."))
-using ConvexFlows
+using ForecastFlows
 
 const FIGPATH = joinpath(@__DIR__, "..", "figures")
 
@@ -73,8 +73,8 @@ xs_tmp = [zeros(2) for _ in 1:length(edges)]
 
 for k in 1:length(dual_val)
     νt = solver_log.xk[k]
-    ConvexFlows.find_arb!(xs_tmp, νt, prob.edges)
-    yhat = ConvexFlows.netflows(xs_tmp, prob.edges, prob.n)
+    ForecastFlows.find_arb!(xs_tmp, νt, prob.edges)
+    yhat = ForecastFlows.netflows(xs_tmp, prob.edges, prob.n)
     primal_val[k] = U(obj, yhat)
 end
 gap = (dual_val .- primal_val)

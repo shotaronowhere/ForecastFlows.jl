@@ -6,7 +6,7 @@ import Graphs: Graph, connected_components
 using Plots, LaTeXStrings
 
 Pkg.activate(joinpath(@__DIR__, "..", ".."))
-using ConvexFlows
+using ForecastFlows
 
 const FIGPATH = joinpath(@__DIR__, "..", "figures")
 

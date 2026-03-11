@@ -11,10 +11,10 @@ using Plots, LaTeXStrings
 using JLD2
 
 Pkg.activate(joinpath(@__DIR__, "..", ".."))
-using ConvexFlows
+using ForecastFlows
 
 const GP = GraphPlot
-const CF = ConvexFlows
+const CF = ForecastFlows
 
 const FIGPATH = joinpath(@__DIR__, "..", "figures")
 const SAVEPATH = joinpath(@__DIR__, "..", "data")
@@ -67,7 +67,7 @@ termination_status(model) ∉ (MOI.OPTIMAL, MOI.SLOW_PROGRESS) && @warn "Probl
 pstar = objective_value(model)
 
 
-# Solve with ConvexFlows.jl
+# Solve with ForecastFlows.jl
 s = Solver(
     flow_objective=Uy,
     edges=lines,
@@ -211,7 +211,7 @@ function run_trial(n; rseed=1, verbose=false)
     p_mosek, t_mosek = run_trial_jump(d, lines)
     verbose && @info "  Finished running Mosek..."
     p_cf, gap_cf, t_cf = run_trial_convexflows(d, lines)
-    verbose && @info "  Finished running ConvexFlows..."
+    verbose && @info "  Finished running ForecastFlows..."
     return p_mosek, p_cf, gap_cf, t_mosek, t_cf
 end
 
@@ -229,7 +229,7 @@ function run_trials(ns; trials=10, verbose=false)
             verbose && @info "  reldiff:  $rel_obj_diff"
             rel_obj_diff > 1e-3 && @warn "  Possible incorrect solution!"
             verbose && @info "  dualgap:  $gap_cf"
-            gap_cf > 1e-3 && @warn "  ConvexFlows didn't produce a solution!"
+            gap_cf > 1e-3 && @warn "  ForecastFlows didn't produce a solution!"
             ts_mosek[t, i] = t_mosek
             ts_cf[t, i] = t_cf
         end
@@ -315,7 +315,7 @@ plot!(
     ts_med_cf,
     ribbon=(ts_med_cf .- q25_cf, q75_cf .- ts_med_cf),
     fillalpha=0.5,
-    label="ConvexFlows.jl",
+    label="ForecastFlows.jl",
     color=:black,
     linewidth=3
 )

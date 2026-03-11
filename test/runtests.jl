@@ -1,4 +1,4 @@
-using ConvexFlows
+using ForecastFlows
 using Test
 
 using LinearAlgebra, Random, SparseArrays
@@ -21,4 +21,8 @@ end
 @testset "solver" begin
     include("solver_bfgs.jl")
     include("solver.jl")
+end
+
+@testset "prediction markets" begin
+    include("prediction_markets.jl")
 end

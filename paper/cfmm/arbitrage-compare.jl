@@ -8,8 +8,8 @@ using Plots, LaTeXStrings
 using JLD2
 
 Pkg.activate(joinpath(@__DIR__, "..", ".."))
-using ConvexFlows
-const CF = ConvexFlows
+using ForecastFlows
+const CF = ForecastFlows
 
 const FIGPATH = joinpath(@__DIR__, "..", "figures")
 const SAVEPATH = joinpath(@__DIR__, "..", "data")
@@ -95,7 +95,7 @@ function run_trial(m; rseed=1, verbose=false)
             cfmms=cfmms,
             verbose=false,
         )
-    verbose && @info "  Finished running ConvexFlows..."
+    verbose && @info "  Finished running ForecastFlows..."
     
     return p_mosek, p_cf, gap_cf, rp_cf, t_mosek, t_cf
 end
@@ -115,7 +115,7 @@ function run_trials(ms; trials=10, verbose=false)
             rel_obj_diff > 1e-3 && @warn "  Possible incorrect solution!"
             verbose && @info "  dualgap:  $gap_cf"
             verbose && @info "  rp norm:  $rp_cf"
-            gap_cf > 1e-3 && @warn "  ConvexFlows didn't produce a solution!"
+            gap_cf > 1e-3 && @warn "  ForecastFlows didn't produce a solution!"
             ts_mosek[t, i] = t_mosek
             ts_cf[t, i] = t_cf
         end
@@ -203,7 +203,7 @@ plot!(
     ts_med_cf,
     ribbon=(ts_med_cf .- q25_cf, q75_cf .- ts_med_cf),
     fillalpha=0.5,
-    label="ConvexFlows.jl",
+    label="ForecastFlows.jl",
     color=:black,
     linewidth=3
 )

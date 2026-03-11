@@ -49,6 +49,12 @@ function initialize_state!(state::BFGSState{T}; x0=nothing, H0=nothing) where T
     return nothing
 end
 
+function reset_inverse_hessian!(state::BFGSState{T}) where T
+    state.Hk .= zero(T)
+    state.Hk[diagind(state.Hk)] .= one(T)
+    return nothing
+end
+
 
 #  ---- LBFGSSolver ----
 struct LBFGSState{
@@ -105,6 +111,19 @@ end
 function initialize_state!(state::LBFGSState{T}; x0=nothing, H0=nothing) where T
     !isnothing(x0) && (state.xk .= x0;)
     !isnothing(H0) && (state.γk[1] = H0;)
+    return nothing
+end
+
+function reset_inverse_hessian!(state::LBFGSState{T}) where T
+    state.ind[1] = 1
+    for i in eachindex(state.sks)
+        state.sks[i] .= zero(T)
+        state.yks[i] .= zero(T)
+        state.ρs[i] = zero(T)
+        state.αs[i] = zero(T)
+        state.βs[i] = zero(T)
+    end
+    state.γk[1] = one(T)
     return nothing
 end
 

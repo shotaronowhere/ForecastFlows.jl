@@ -7,8 +7,8 @@ using StatsBase
 using Plots, LaTeXStrings
 
 Pkg.activate(joinpath(@__DIR__, "..", ".."))
-using ConvexFlows
-const CF = ConvexFlows
+using ForecastFlows
+const CF = ForecastFlows
 
 const FIGPATH = joinpath(@__DIR__, "..", "figures")
 
@@ -41,7 +41,7 @@ time, pstar = run_trial_jump(
     optimizer=() -> Mosek.Optimizer()
 )
 
-# Solve with ConvexFlows.jl
+# Solve with ForecastFlows.jl
 s = Solver(
     flow_objective=Uy,
     edges=cfmms,
@@ -127,7 +127,7 @@ time, pstar_vi = run_trial_jump(
     optimizer=() -> Mosek.Optimizer()
 )
 
-# Solve with ConvexFlows.jl
+# Solve with ForecastFlows.jl
 Vis = [NondecreasingQuadratic(length(cfmm)) for cfmm in cfmms]
 s_vi = Solver(
     flow_objective=Uy,

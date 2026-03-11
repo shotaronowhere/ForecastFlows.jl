@@ -19,7 +19,7 @@ Random.seed!(1)
 
     # Solves the maximum arbitrage problem for the two-coin constant product case.
     # Assumes that v > 0 and γ > 0.
-    function ConvexFlows.find_arb!(x::Vector{T}, e::Uniswap{T}, η::AbstractVector{T}) where T
+    function ForecastFlows.find_arb!(x::Vector{T}, e::Uniswap{T}, η::AbstractVector{T}) where T
         # See App. A of "An Analysis of Uniswap Markets"
         @inline prod_arb_δ(m, r, k, γ) = max(sqrt(γ*m*k) - r, 0.0)/γ
         @inline prod_arb_λ(m, r, k, γ) = max(r - sqrt(k/(m*γ)), 0.0)
@@ -52,28 +52,33 @@ Random.seed!(1)
         return LinearNonnegativeCustom{Float64}(n, c)
     end
 
-    function U(obj::LinearNonnegativeCustom{T}, y) where T
+    function ForecastFlows.U(obj::LinearNonnegativeCustom{T}, y) where T
         return dot(obj.c, y)
     end
 
-    function grad_U(obj::LinearNonnegativeCustom{T}, y) where T
+    function ForecastFlows.grad_U(obj::LinearNonnegativeCustom{T}, y) where T
         return obj.c
     end
 
     # Assumes that ν - c ≥ 0
-    function ConvexFlows.Ubar(obj::LinearNonnegativeCustom{T}, ν) where T
+    function ForecastFlows.Ubar(obj::LinearNonnegativeCustom{T}, ν) where T
         return zero(T)
     end
 
     # Assumes that ν - c ≥ 0
-    function ConvexFlows.grad_Ubar!(g, obj::LinearNonnegativeCustom{T}, ν) where T
+    function ForecastFlows.grad_Ubar!(g, obj::LinearNonnegativeCustom{T}, ν) where T
         g .= zero(T)
         return nothing
     end
 
     # Add a small amount to the lower limit to avoid numerical issues
-    ConvexFlows.lower_limit(obj::LinearNonnegativeCustom{T}) where {T} = obj.c .+ sqrt(eps(T))
-    ConvexFlows.upper_limit(obj::LinearNonnegativeCustom{T}) where {T} = convert(T, Inf) .+ zeros(T, obj.n)
+    ForecastFlows.lower_limit(obj::LinearNonnegativeCustom{T}) where {T} = obj.c .+ sqrt(eps(T))
+    ForecastFlows.upper_limit(obj::LinearNonnegativeCustom{T}) where {T} = convert(T, Inf) .+ zeros(T, obj.n)
+    function ForecastFlows.recovery_targets!(target, fixed, obj::LinearNonnegativeCustom{T}, ν) where {T}
+        fill!(target, zero(T))
+        fill!(fixed, false)
+        return nothing
+    end
 
     min_price = 1e-2
     max_price = 1.0
@@ -87,6 +92,7 @@ Random.seed!(1)
         n=n,
     )
     solve!(s, verbose=false, memory=5)
+    @test s.certificate.passed
     all(s.y .≥ -1e-5)       # pfeas
     for (i, cfmm) in enumerate(cfmms)
         Δ = max.(-s.xs[i], 0.0)
@@ -108,6 +114,7 @@ Random.seed!(1)
         n=n
     )
     solve!(s_vi, verbose=false, memory=5)
+    @test s_vi.certificate.passed
 
     all(s_vi.y .≥ -1e-5)       # pfeas
     for (i, cfmm) in enumerate(cfmms)

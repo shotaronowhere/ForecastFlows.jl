@@ -1,10 +1,10 @@
 #=
 # CFMM Routing
-This example uses `ConvexFlows` to solve a CFMM order routing problem
+This example uses `ForecastFlows` to solve a CFMM order routing problem
 
 =#
 
-using ConvexFlows
+using ForecastFlows
 using Random, LinearAlgebra, SparseArrays
 using Plots
 import Graphs: Graph
