@@ -532,7 +532,7 @@ function _solve_lbfgsb_once!(
     end
 
     find_arb!(s)
-    optimizer = L_BFGS_B(size(bounds, 2), 17)
+    optimizer = L_BFGS_B(size(bounds, 2), max(17, memory))
     tt = @timed optimizer(
         fn,
         grad!,

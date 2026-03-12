@@ -4,14 +4,16 @@
 hypergraphs, with a prediction-market routing extension built on the dual
 decomposition framework from Theo Diamandis's *Convex Network Flows*.
 
-The public routing surface is centered on the root solver API:
+The package now exposes two supported prediction-market integration surfaces:
 
-- `Solver`
-- `solve!`
-- `SplitMergeEdge`
-- `EndowmentLinear`
-- `certify_solution`
-- `solve_with_fixed_gas!`
+- an in-process Julia facade:
+  - `PredictionMarketProblem`
+  - `ConstantProductMarketSpec`
+  - `UniV3MarketSpec`
+  - `solve_prediction_market`
+  - `compare_prediction_market_families`
+- an out-of-process worker:
+  - `bin/forecastflows-worker.jl`
 
 The prediction-market router models:
 
@@ -22,35 +24,127 @@ The prediction-market router models:
 This lets the solver discover direct and synthetic routes from shadow-price
 equilibration instead of explicit path enumeration.
 
-## Validated 98-market benchmark
+## Install v1.0.0
 
-The package includes an opt-in benchmark based on the realistic 98-market
-Deep-Trading fixture, evaluated under an aligned single-tick replay model.
+Until the package is published in the General registry, install the tagged
+source release directly:
 
-Current validated raw results:
+```julia
+using Pkg
 
-- baseline EV: `150.22005815295148`
-- direct raw / replayed EV: `150.25828864961397` / `150.25828864961383`
-- mixed raw / replayed EV: `150.38032237147735` / `150.3803223714772`
+Pkg.add(url="https://github.com/shotaronowhere/ForecastFlows.jl", rev="v1.0.0")
+```
 
-The current rough fixed-charge gas proxy gives:
+The supported v1 dependency surfaces are:
 
-- gas-proxy net EV: `150.36336211734135`
+- the Julia prediction-market facade
+- the newline-delimited JSON worker at `bin/forecastflows-worker.jl`
 
-This gas-adjusted value is a Julia-local approximation, not an apples-to-apples
-comparison to the Deep-Trading grouped L2/L1 gas model.
+## Dependency quickstart
+
+Use the Julia facade directly:
+
+```julia
+using ForecastFlows
+
+problem = PredictionMarketProblem(
+    [0.55, 0.45],
+    1.0,
+    [0.0, 0.0],
+    [
+        ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
+        ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+    ];
+    split_bound=5.0,
+)
+
+result = solve_prediction_market(problem; mode=:mixed_enabled, max_doublings=0)
+```
+
+Or run the worker and call it from Rust or another driver:
+
+```bash
+julia --project bin/forecastflows-worker.jl
+```
+
+Worker requests are newline-delimited JSON with `protocol_version = 1`. The
+worker returns:
+
+- signed direct AMM trades keyed by `market_id`
+- aggregate mint and merge amounts
+- initial and final EV
+- final cash and holdings
+- certification metadata
+
+Worker numeric inputs must be decimal-scaled token units, not raw wei or other
+base-unit integers.
+
+For `UniV3`-style liquidity, the preferred external representation is a list of
+bands:
+
+```json
+{
+  "type": "univ3",
+  "market_id": "u1",
+  "outcome_index": 1,
+  "current_price": 0.5,
+  "bands": [
+    {"lower_price": 1.0, "liquidity_L": 10.0},
+    {"lower_price": 0.5, "liquidity_L": 12.0},
+    {"lower_price": 0.25, "liquidity_L": 10.0}
+  ],
+  "fee_multiplier": 0.997
+}
+```
+
+The legacy low-level form using `lower_ticks` and `liquidity` remains accepted,
+but those fields are less intuitive: `lower_ticks` are descending prices, not
+integer ticks, and `liquidity` is the internal `L^2` weight.
+
+Gas modeling, tx construction, tx packing, and chain interaction remain driver
+responsibilities.
+
+## v1 support matrix
+
+- Julia `1.10`
+- Linux `x64`
+- macOS `x64`
+- supported interfaces: Julia facade and JSON worker only
+
+## Deep-Trading Benchmark Sweep
+
+The package includes an opt-in benchmark sweep over the six vendored
+Deep-Trading fixtures, evaluated under an aligned single-tick replay model.
+
+The benchmark now tracks three distinct quantities:
+
+- mixed convex raw upper bound from the continuous solver
+- executable raw EV after replay
+- best-family executable net EV under the pinned Deep-Trading OP snapshot
+
+The raw Deep-Trading provenance fixture remains `test/fixtures/rebalancer_ab_expected.json`.
+
+The Julia-local net benchmark regression fixture is now `test/fixtures/rebalancer_ab_net_expected.json`.
+
+For the heterogeneous 98-outcome L1-like case, the current best-family net EV
+under that pinned snapshot is `150.36411702995255`, with `mixed` beating
+`direct`.
 
 The benchmark fixtures are vendored under `test/fixtures/`. External solver
 repositories are used only as provenance/reference sources and are not part of
 the public package source.
 
-## Release notes
+This benchmark is a release regression benchmark under the aligned surrogate
+execution model. It is not a claim of exact on-chain net EV or blanket
+solver-vs-solver dominance.
 
-This public fork renames the package to `ForecastFlows`, adds a
-prediction-market routing extension based on convex-flow dual decomposition,
-validates raw 98-market benchmark parity against the pinned Deep-Trading
-fixture, and keeps the current gas-adjusted result explicitly scoped to a rough
-fixed-charge proxy.
+## v1.0.0 release scope
+
+See `CHANGELOG.md` for the v1.0.0 release notes. The important scope boundary is:
+
+- `ForecastFlows` v1 is a dependency-grade solver release, not a full trading engine
+- Rust or another driver still owns supervision, timeouts, gas, tx building, and chain I/O
+- `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not benchmark truth
 
 ## Run the benchmark
 
@@ -60,17 +154,24 @@ Run the full test suite:
 julia --project -e 'using Pkg; Pkg.test()'
 ```
 
-Run the opt-in raw 98-market benchmark:
+Run the opt-in Deep-Trading benchmark sweep:
 
 ```bash
 FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK=1 julia --project -e 'using Pkg; Pkg.test()'
 ```
 
-Run the opt-in raw + gas-proxy 98-market benchmark:
+Run the full v1 release gate:
 
 ```bash
-FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK=1 FORECASTFLOWS_RUN_DEEPTRADING_GAS_BENCHMARK=1 julia --project -e 'using Pkg; Pkg.test()'
+julia --project bin/release-check.jl
 ```
+
+This runs:
+
+- the default test suite
+- the worker smoke script
+- the docs build
+- the opt-in Deep-Trading benchmark sweep
 
 ## Build docs locally
 
@@ -89,10 +190,31 @@ julia --project=docs docs/make.jl
 ## Scope and limitations
 
 - The optimizer certifies the continuous convex routing problem.
+- The public dependency API returns abstract route plans, not executable tx bundles.
 - Executable benchmark results come from a no-flash replay layer.
 - Split/merge recovery is specialized to a single `SplitMergeEdge`.
-- The current gas model is a rough fixed-charge proxy.
-- The 98-market benchmark is opt-in, not a default CI gate.
+- `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not the
+  Deep-Trading benchmark comparator.
+- The Deep-Trading benchmark sweep is opt-in, not a default CI gate.
+
+## Optional sysimage
+
+For lower worker cold-start, use:
+
+```bash
+julia --project bin/build-worker-sysimage.jl
+```
+
+The helper writes the sysimage under `build/` and prints the full output path.
+On Linux the extension is `.so`; on macOS it is `.dylib`.
+
+Then start the worker with the generated sysimage path:
+
+```bash
+julia --project -J build/forecastflows-worker.<dlext> bin/forecastflows-worker.jl
+```
+
+This helper is optional and kept outside the default runtime path.
 
 ## Attribution
 

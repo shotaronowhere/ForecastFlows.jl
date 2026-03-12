@@ -1,21 +1,56 @@
 using JSON3
+using Libdl
 
 const pm_tol = 1e-6
-const dt_case_id = "heterogeneous_ninety_eight_outcome_l1_like_case"
+const dt_focus_case_id = "heterogeneous_ninety_eight_outcome_l1_like_case"
 const benchmark_opt_in_env = "FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK"
-const benchmark_gas_opt_in_env = "FORECASTFLOWS_RUN_DEEPTRADING_GAS_BENCHMARK"
 const replay_atol = 1e-9
 const dt_cases_fixture = joinpath(@__DIR__, "fixtures", "rebalancer_ab_cases.json")
 const dt_expected_fixture = joinpath(@__DIR__, "fixtures", "rebalancer_ab_expected.json")
+const dt_net_expected_fixture = joinpath(@__DIR__, "fixtures", "rebalancer_ab_net_expected.json")
 
-const dt_expected_case = let
-    payload = JSON3.read(read(dt_expected_fixture, String))
-    getproperty(payload, Symbol(dt_case_id))
+const dt_cases_payload = JSON3.read(read(dt_cases_fixture, String))
+const dt_expected_payload = JSON3.read(read(dt_expected_fixture, String))
+const dt_net_expected_payload = JSON3.read(read(dt_net_expected_fixture, String))
+
+const dt_case_ids = sort!(String.(collect(propertynames(dt_cases_payload))))
+const heterogeneous_mixed_raw_wobble_tol = 65_536 / 1e18
+
+struct DeepTradingRawExpectedRow
+    direct_ev::Float64
+    mixed_ev::Float64
+    full_rebalance_only_ev::Float64
+    action_count::Int
+    onchain_exact_ev::Float64
 end
 
-const dt_direct_ev = Float64(dt_expected_case.offchain_direct_ev_wei) / 1e18
-const dt_mixed_ev = Float64(dt_expected_case.offchain_mixed_ev_wei) / 1e18
-const dt_full_rebalance_only_ev = Float64(dt_expected_case.offchain_full_rebalance_only_ev_wei) / 1e18
+struct DeepTradingNetExpectedRow
+    direct_net_ev::Float64
+    mixed_net_ev::Float64
+    best_family::String
+    best_net_ev::Float64
+end
+
+function deep_trading_raw_expected(case_id::String)
+    row = getproperty(dt_expected_payload, Symbol(case_id))
+    return DeepTradingRawExpectedRow(
+        Float64(row.offchain_direct_ev_wei) / 1e18,
+        Float64(row.offchain_mixed_ev_wei) / 1e18,
+        Float64(row.offchain_full_rebalance_only_ev_wei) / 1e18,
+        Int(row.offchain_action_count),
+        Float64(row.expected_onchain_exact_ev_wei) / 1e18,
+    )
+end
+
+function deep_trading_net_expected(case_id::String)
+    row = getproperty(dt_net_expected_payload, Symbol(case_id))
+    return DeepTradingNetExpectedRow(
+        Float64(row.direct_net_ev),
+        Float64(row.mixed_net_ev),
+        String(row.best_family),
+        Float64(row.best_net_ev),
+    )
+end
 
 struct SingleTickMarketSpec
     current_price::Float64
@@ -86,7 +121,29 @@ struct ReplayReport
     executed_direct_sell::Float64
     executed_mint::Float64
     executed_merge::Float64
+    actions::Vector{NamedTuple}
 end
+
+const dt_benchmark_snapshot = (
+    gas_price_wei=1_002_325.0,
+    eth_usd=3000.0,
+    l1_fee_per_byte_wei=1_643_855.3414634147,
+    l1_data_fee_floor_susd=0.0,
+)
+
+const benchmark_direct_buy_l2_units = 57_542
+const benchmark_direct_sell_l2_units = 38_099
+const benchmark_direct_merge_l2_units = 21_502
+const benchmark_mint_sell_base_l2_units = 17_783
+const benchmark_mint_sell_per_sell_leg_l2_units = 50_649
+const benchmark_buy_merge_base_l2_units = 37_370
+const benchmark_buy_merge_per_buy_leg_l2_units = 29_670
+const benchmark_max_packed_tx_l2_gas_units = 40_000_000
+const benchmark_tx_envelope_bytes = 110
+const benchmark_batch_call_base_bytes = 100
+const benchmark_swap_bytes = 224
+const benchmark_flash_route_extra_bytes = 160
+const benchmark_direct_merge_call_bytes = 220
 
 mutable struct ReplaySingleTickPool
     current_price::Float64
@@ -289,6 +346,202 @@ function edge_derived_pool(edge::SingleTickBenchmarkEdge{T}) where T
     )
 end
 
+replay_trade_action(kind::Symbol, market_idx::Int, amount::Float64, cash_quote::Float64) =
+    NamedTuple{(:kind, :market_idx, :amount, :quote)}((kind, market_idx, amount, cash_quote))
+
+replay_execution_group(
+    kind::Symbol,
+    buy_legs::Int,
+    sell_legs::Int,
+    planned_cost::Float64,
+    planned_proceeds::Float64,
+) = (; kind, buy_legs, sell_legs, planned_cost, planned_proceeds)
+
+benchmark_fee_report(
+    total_l2_fee::Float64,
+    total_l1_fee::Float64,
+    total_fee::Float64,
+    group_count::Int,
+    tx_count::Int,
+    total_calldata_bytes::Int,
+    total_l2_gas_units::Int,
+) = (; total_l2_fee, total_l1_fee, total_fee, group_count, tx_count, total_calldata_bytes, total_l2_gas_units)
+
+function benchmark_group_l2_gas_units(group)
+    if group.kind == :direct_buy
+        return benchmark_direct_buy_l2_units
+    elseif group.kind == :direct_sell
+        return benchmark_direct_sell_l2_units
+    elseif group.kind == :direct_merge
+        return benchmark_direct_merge_l2_units
+    elseif group.kind == :mint_sell
+        return benchmark_mint_sell_base_l2_units +
+               benchmark_mint_sell_per_sell_leg_l2_units * max(group.sell_legs, 1)
+    elseif group.kind == :buy_merge
+        return benchmark_buy_merge_base_l2_units +
+               benchmark_buy_merge_per_buy_leg_l2_units * max(group.buy_legs, 1)
+    end
+    throw(ArgumentError("unsupported replay execution group kind $(group.kind)"))
+end
+
+function benchmark_group_incremental_calldata_bytes(group)
+    if group.kind == :direct_buy || group.kind == :direct_sell
+        return benchmark_swap_bytes
+    elseif group.kind == :mint_sell
+        return benchmark_flash_route_extra_bytes + benchmark_swap_bytes * max(group.sell_legs, 1)
+    elseif group.kind == :buy_merge
+        return benchmark_flash_route_extra_bytes + benchmark_swap_bytes * max(group.buy_legs, 1)
+    elseif group.kind == :direct_merge
+        return benchmark_direct_merge_call_bytes
+    end
+    throw(ArgumentError("unsupported replay execution group kind $(group.kind)"))
+end
+
+function benchmark_group_calldata_bytes(group)
+    return benchmark_tx_envelope_bytes +
+           benchmark_batch_call_base_bytes +
+           benchmark_group_incremental_calldata_bytes(group)
+end
+
+benchmark_l2_fee_susd(l2_gas_units::Integer, snapshot) =
+    Float64(l2_gas_units) * snapshot.gas_price_wei * snapshot.eth_usd / 1e18
+
+function benchmark_l1_fee_susd(calldata_bytes::Integer, snapshot)
+    l1_fee = Float64(calldata_bytes) * snapshot.l1_fee_per_byte_wei * snapshot.eth_usd / 1e18
+    return max(snapshot.l1_data_fee_floor_susd, l1_fee)
+end
+
+function replay_execution_groups(actions::AbstractVector{<:NamedTuple})
+    groups = NamedTuple[]
+    i = 1
+    while i <= length(actions)
+        action = actions[i]
+        if action.kind == :buy
+            start = i
+            while i <= length(actions) && actions[i].kind == :buy
+                i += 1
+            end
+            if i <= length(actions) && actions[i].kind == :merge
+                action_slice = @view actions[start:i]
+                push!(groups, replay_execution_group(
+                    :buy_merge,
+                    i - start,
+                    0,
+                    sum(a.quote for a in action_slice if a.kind == :buy),
+                    actions[i].quote,
+                ))
+                i += 1
+            else
+                for j in start:(i - 1)
+                    push!(groups, replay_execution_group(:direct_buy, 1, 0, actions[j].quote, 0.0))
+                end
+            end
+        elseif action.kind == :sell
+            push!(groups, replay_execution_group(:direct_sell, 0, 1, 0.0, action.quote))
+            i += 1
+        elseif action.kind == :merge
+            push!(groups, replay_execution_group(:direct_merge, 0, 0, 0.0, action.quote))
+            i += 1
+        elseif action.kind == :mint
+            start = i
+            i += 1
+            while i <= length(actions) && actions[i].kind == :sell
+                i += 1
+            end
+            stop = i - 1
+            stop > start || throw(ArgumentError("unsupported mint-only replay action block"))
+            push!(groups, replay_execution_group(
+                :mint_sell,
+                0,
+                stop - start,
+                actions[start].quote,
+                sum(actions[j].quote for j in (start + 1):stop),
+            ))
+        else
+            throw(ArgumentError("unsupported replay action kind $(action.kind)"))
+        end
+    end
+    return groups
+end
+
+function price_execution_groups(
+    groups::AbstractVector{<:NamedTuple},
+    snapshot=dt_benchmark_snapshot,
+)
+    isempty(groups) && return benchmark_fee_report(0.0, 0.0, 0.0, 0, 0, 0, 0)
+
+    total_l2_fee = 0.0
+    total_l1_fee = 0.0
+    total_l2_gas_units = 0
+    total_calldata_bytes = 0
+    tx_count = 0
+    chunk_l2_gas_units = 0
+    chunk_calldata_bytes = 0
+
+    function flush_chunk!()
+        chunk_calldata_bytes == 0 && return nothing
+        total_l2_fee += benchmark_l2_fee_susd(chunk_l2_gas_units, snapshot)
+        total_l1_fee += benchmark_l1_fee_susd(chunk_calldata_bytes, snapshot)
+        total_l2_gas_units += chunk_l2_gas_units
+        total_calldata_bytes += chunk_calldata_bytes
+        tx_count += 1
+        chunk_l2_gas_units = 0
+        chunk_calldata_bytes = 0
+        return nothing
+    end
+
+    for group in groups
+        l2_gas_units = benchmark_group_l2_gas_units(group)
+        base_bytes = benchmark_group_calldata_bytes(group)
+        incremental_bytes = benchmark_group_incremental_calldata_bytes(group)
+
+        l2_gas_units < benchmark_max_packed_tx_l2_gas_units ||
+            throw(ArgumentError("benchmark execution group exceeds packed gas cap"))
+
+        if chunk_calldata_bytes == 0
+            chunk_l2_gas_units = l2_gas_units
+            chunk_calldata_bytes = base_bytes
+            continue
+        end
+
+        tentative_l2_gas_units = chunk_l2_gas_units + l2_gas_units
+        if tentative_l2_gas_units >= benchmark_max_packed_tx_l2_gas_units
+            flush_chunk!()
+            chunk_l2_gas_units = l2_gas_units
+            chunk_calldata_bytes = base_bytes
+            continue
+        end
+
+        chunk_l2_gas_units = tentative_l2_gas_units
+        chunk_calldata_bytes += incremental_bytes
+    end
+
+    flush_chunk!()
+    return benchmark_fee_report(
+        total_l2_fee,
+        total_l1_fee,
+        total_l2_fee + total_l1_fee,
+        length(groups),
+        tx_count,
+        total_calldata_bytes,
+        total_l2_gas_units,
+    )
+end
+
+price_replay_report(report::ReplayReport, snapshot=dt_benchmark_snapshot) =
+    price_execution_groups(replay_execution_groups(report.actions), snapshot)
+
+function benchmark_best_family(direct_net_ev::Float64, mixed_net_ev::Float64; atol::Float64=1e-12)
+    return mixed_net_ev > direct_net_ev + atol ? "mixed" : "direct"
+end
+
+function raw_fixture_atol(case_id::String, family::Symbol)
+    if case_id == dt_focus_case_id && family == :mixed
+        return heterogeneous_mixed_raw_wobble_tol
+    end
+    return 1e-12
+end
+
 function assemble_benchmark_case(
     case_id::String,
     predictions::Vector{Float64},
@@ -347,12 +600,27 @@ function assemble_benchmark_case(
 end
 
 function build_case_from_deep_trading(case_id::String)
-    payload = JSON3.read(read(dt_cases_fixture, String))
-    case = getproperty(payload, Symbol(case_id))
+    case = getproperty(dt_cases_payload, Symbol(case_id))
+    expected = deep_trading_raw_expected(case_id)
 
-    preds = to_tokens.(collect(case.predictions_wad))
-    prices = to_tokens.(collect(case.starting_prices_wad))
-    holdings0 = to_tokens.(collect(case.initial_holdings_wad))
+    uniform_count = Int(case.uniform_count)
+    if uniform_count > 0
+        pred = 1.0 / uniform_count
+        preds = fill(pred, uniform_count)
+        prices = fill(pred * Float64(case.uniform_price_bps) / 10_000.0, uniform_count)
+        holdings0 = zeros(uniform_count)
+        is_token1 = fill(true, uniform_count)
+        liquidities = fill(to_tokens(case.uniform_liquidity), uniform_count)
+        ticks = [Int[Int(case.uniform_tick_lo), Int(case.uniform_tick_hi)] for _ in 1:uniform_count]
+    else
+        preds = to_tokens.(collect(case.predictions_wad))
+        prices = to_tokens.(collect(case.starting_prices_wad))
+        holdings0 = to_tokens.(collect(case.initial_holdings_wad))
+        is_token1 = Bool.(collect(case.is_token1))
+        liquidities = to_tokens.(collect(case.liquidity))
+        ticks = [Int[Int(tick[1]), Int(tick[2])] for tick in case.ticks]
+    end
+
     cash0 = to_tokens(case.initial_cash_budget_wad)
     fee_tier = Float64(case.fee_tier)
     γ = 1.0 - fee_tier / 1e6
@@ -366,11 +634,11 @@ function build_case_from_deep_trading(case_id::String)
     markets = SingleTickMarketSpec[]
     for i in 1:n_outcomes
         current_price = prices[i]
-        is_token1 = Bool(case.is_token1[i])
-        lo = Int(case.ticks[i][1])
-        hi = Int(case.ticks[i][2])
-        limits = benchmark_tick_limit_prices(lo, hi, is_token1)
-        liquidity = to_tokens(case.liquidity[i])
+        token1 = is_token1[i]
+        lo = ticks[i][1]
+        hi = ticks[i][2]
+        limits = benchmark_tick_limit_prices(lo, hi, token1)
+        liquidity = liquidities[i]
         push!(tick_lo, lo)
         push!(tick_hi, hi)
         push!(liquidity_raw, liquidity)
@@ -384,7 +652,7 @@ function build_case_from_deep_trading(case_id::String)
             γ,
             lo,
             hi,
-            is_token1,
+            token1,
         ))
     end
 
@@ -395,9 +663,9 @@ function build_case_from_deep_trading(case_id::String)
         holdings0,
         cash0,
         markets;
-        deep_trading_direct_ev=dt_direct_ev,
-        deep_trading_mixed_ev=dt_mixed_ev,
-        deep_trading_full_rebalance_only_ev=dt_full_rebalance_only_ev,
+        deep_trading_direct_ev=expected.direct_ev,
+        deep_trading_mixed_ev=expected.mixed_ev,
+        deep_trading_full_rebalance_only_ev=expected.full_rebalance_only_ev,
     )
 end
 
@@ -434,6 +702,33 @@ end
 
 function split_flow_size(x)
     return isempty(x) ? 0.0 : maximum(abs, x[2:end])
+end
+
+function solve_prediction_market_low_level(problem::PredictionMarketProblem; mode::Symbol=:direct_only, split_bound=nothing, kwargs...)
+    n_outcomes = length(problem.outcome_values)
+    edges = Edge[]
+    for spec in problem.markets
+        if spec isa ConstantProductMarketSpec
+            push!(edges, ProductTwoCoin([spec.collateral_reserve, spec.outcome_reserve], spec.fee_multiplier, [1, spec.outcome_index + 1]))
+        elseif spec isa UniV3MarketSpec
+            push!(edges, UniV3(spec.current_price, spec.lower_ticks, spec.liquidity, spec.fee_multiplier, [1, spec.outcome_index + 1]))
+        else
+            error("unsupported market spec type $(typeof(spec))")
+        end
+    end
+
+    if mode == :mixed_enabled
+        bound = isnothing(split_bound) ? (isnothing(problem.split_bound) ? problem.initial_cash + sum(problem.initial_holdings) : problem.split_bound) : split_bound
+        push!(edges, SplitMergeEdge(collect(1:(n_outcomes + 1)), bound))
+    end
+
+    solver = Solver(
+        flow_objective=EndowmentLinear(vcat([1.0], problem.outcome_values), vcat([problem.initial_cash], problem.initial_holdings)),
+        edges=edges,
+        n=n_outcomes + 1,
+    )
+    solve!(solver; verbose=false, pgtol=1e-8, max_iter=5_000, max_fun=10_000, kwargs...)
+    return solver
 end
 
 function desired_route_from_solver(benchmark::DeepTradingBenchmarkCase, s::Solver; atol::Float64=replay_atol)
@@ -524,6 +819,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
     executed_mint = 0.0
     executed_merge = 0.0
     counts = ReplayActionCounts(0, 0, 0, 0, 0)
+    actions = NamedTuple[]
 
     for i in eachindex(pools)
         desired = sell_remaining[i]
@@ -537,6 +833,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
         sell_remaining[i] = max(sell_remaining[i] - sold, 0.0)
         executed_direct_sell += sold
         counts = ReplayActionCounts(counts.direct_buys, counts.direct_sells + 1, counts.mint_rounds, counts.direct_merge_rounds, counts.buy_merge_rounds)
+        push!(actions, replay_trade_action(:sell, i, sold, proceeds))
     end
 
     while merge_remaining > atol
@@ -547,6 +844,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
         merge_remaining = max(merge_remaining - direct_merge, 0.0)
         executed_merge += direct_merge
         counts = ReplayActionCounts(counts.direct_buys, counts.direct_sells, counts.mint_rounds, counts.direct_merge_rounds + 1, counts.buy_merge_rounds)
+        push!(actions, replay_trade_action(:merge, 0, direct_merge, direct_merge))
     end
 
     mint_iters = 0
@@ -560,6 +858,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
         mint_remaining = max(mint_remaining - round_amount, 0.0)
         executed_mint += round_amount
         counts = ReplayActionCounts(counts.direct_buys, counts.direct_sells, counts.mint_rounds + 1, counts.direct_merge_rounds, counts.buy_merge_rounds)
+        push!(actions, replay_trade_action(:mint, 0, round_amount, round_amount))
 
         for i in eachindex(pools)
             desired = min(sell_remaining[i], round_amount)
@@ -573,6 +872,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
             sell_remaining[i] = max(sell_remaining[i] - sold, 0.0)
             executed_direct_sell += sold
             counts = ReplayActionCounts(counts.direct_buys, counts.direct_sells + 1, counts.mint_rounds, counts.direct_merge_rounds, counts.buy_merge_rounds)
+            push!(actions, replay_trade_action(:sell, i, sold, proceeds))
         end
     end
 
@@ -593,6 +893,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
             buy_remaining[i] = max(buy_remaining[i] - bought, 0.0)
             executed_direct_buy += bought
             counts = ReplayActionCounts(counts.direct_buys + 1, counts.direct_sells, counts.mint_rounds, counts.direct_merge_rounds, counts.buy_merge_rounds)
+            push!(actions, replay_trade_action(:buy, i, bought, cost))
         end
 
         holdings .-= round_amount
@@ -600,6 +901,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
         merge_remaining = max(merge_remaining - round_amount, 0.0)
         executed_merge += round_amount
         counts = ReplayActionCounts(counts.direct_buys, counts.direct_sells, counts.mint_rounds, counts.direct_merge_rounds, counts.buy_merge_rounds + 1)
+        push!(actions, replay_trade_action(:merge, 0, round_amount, round_amount))
     end
 
     for i in eachindex(pools)
@@ -614,6 +916,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
         buy_remaining[i] = max(buy_remaining[i] - bought, 0.0)
         executed_direct_buy += bought
         counts = ReplayActionCounts(counts.direct_buys + 1, counts.direct_sells, counts.mint_rounds, counts.direct_merge_rounds, counts.buy_merge_rounds)
+        push!(actions, replay_trade_action(:buy, i, bought, cost))
     end
 
     final_raw_ev = cash + dot(benchmark.predictions, holdings)
@@ -632,6 +935,7 @@ function replay_desired_route(benchmark::DeepTradingBenchmarkCase, route::RouteD
         executed_direct_sell,
         executed_mint,
         executed_merge,
+        actions,
     )
 end
 
@@ -660,6 +964,64 @@ end
 
 function solve_direct_benchmark(benchmark; method::Symbol=:bfgs_exact, kwargs...)
     return solve_router_result(benchmark.amm_edges, benchmark.objective; n=benchmark.n, method=method, kwargs...)
+end
+
+function solve_benchmark_case(
+    benchmark::DeepTradingBenchmarkCase;
+    method::Symbol=:auto,
+    pgtol::Float64=1e-6,
+    max_iter::Int=10_000,
+    max_fun::Int=20_000,
+)
+    direct = solve_direct_benchmark(
+        benchmark;
+        method=method,
+        pgtol=pgtol,
+        max_iter=max_iter,
+        max_fun=max_fun,
+    )
+    mixed = solve_mixed_benchmark(
+        benchmark;
+        method=method,
+        pgtol=pgtol,
+        max_iter=max_iter,
+        max_fun=max_fun,
+    )
+
+    direct_route = desired_route_from_solver(benchmark, direct.solver)
+    mixed_route = desired_route_from_solver(benchmark, mixed.solver)
+    direct_replay = replay_desired_route(benchmark, direct_route)
+    mixed_replay = replay_desired_route(benchmark, mixed_route)
+    direct_fees = price_replay_report(direct_replay)
+    mixed_fees = price_replay_report(mixed_replay)
+
+    direct_certified = !isnothing(direct.solver.certificate) && direct.solver.certificate.passed
+    mixed_certified = !isnothing(mixed.solver.certificate) && mixed.solver.certificate.passed
+    direct_raw_upper_ev = direct_certified ? direct_route.raw_upper_ev : NaN
+    mixed_raw_upper_ev = mixed_certified ? mixed_route.raw_upper_ev : NaN
+    direct_net_ev = direct_replay.final_raw_ev - direct_fees.total_fee
+    mixed_net_ev = mixed_replay.final_raw_ev - mixed_fees.total_fee
+    best_family = benchmark_best_family(direct_net_ev, mixed_net_ev)
+    best_net_ev = best_family == "mixed" ? mixed_net_ev : direct_net_ev
+
+    return (
+        direct=direct,
+        mixed=mixed,
+        direct_route=direct_route,
+        mixed_route=mixed_route,
+        direct_replay=direct_replay,
+        mixed_replay=mixed_replay,
+        direct_fees=direct_fees,
+        mixed_fees=mixed_fees,
+        direct_certified=direct_certified,
+        mixed_certified=mixed_certified,
+        direct_raw_upper_ev=direct_raw_upper_ev,
+        mixed_raw_upper_ev=mixed_raw_upper_ev,
+        direct_net_ev=direct_net_ev,
+        mixed_net_ev=mixed_net_ev,
+        best_family=best_family,
+        best_net_ev=best_net_ev,
+    )
 end
 
 function active_edge_count(s::Solver; atol=1e-8)
@@ -1003,150 +1365,688 @@ end
         @test buy_merge.final_cash >= -1e-9
     end
 
-    @testset "deep trading 98-market fixture translation" begin
-        benchmark = build_case_from_deep_trading(dt_case_id)
+    @testset "benchmark pricing formulas" begin
+        direct_buy_fee = price_execution_groups([replay_execution_group(:direct_buy, 1, 0, 1.0, 0.0)])
+        @test direct_buy_fee.total_l2_gas_units == benchmark_direct_buy_l2_units
+        @test direct_buy_fee.total_calldata_bytes == 434
+        @test direct_buy_fee.total_fee ≈ 0.00017516765510458535 atol=1e-18
 
+        direct_sell_fee = price_execution_groups([replay_execution_group(:direct_sell, 0, 1, 0.0, 1.0)])
+        @test direct_sell_fee.total_l2_gas_units == benchmark_direct_sell_l2_units
+        @test direct_sell_fee.total_calldata_bytes == 434
+        @test direct_sell_fee.total_fee ≈ 0.00011670304017958536 atol=1e-18
+
+        direct_merge_fee = price_execution_groups([replay_execution_group(:direct_merge, 0, 0, 0.0, 1.0)])
+        @test direct_merge_fee.total_l2_gas_units == benchmark_direct_merge_l2_units
+        @test direct_merge_fee.total_calldata_bytes == 430
+        @test direct_merge_fee.total_fee ≈ 6.67765498404878e-5 atol=1e-18
+
+        mint_sell_fee = price_execution_groups([replay_execution_group(:mint_sell, 0, 1, 1.0, 0.4)])
+        @test mint_sell_fee.total_l2_gas_units == benchmark_mint_sell_base_l2_units + benchmark_mint_sell_per_sell_leg_l2_units
+        @test mint_sell_fee.total_calldata_bytes == 594
+        @test mint_sell_fee.total_fee ≈ 0.0002087026634184878 atol=1e-18
+
+        buy_merge_fee = price_execution_groups([replay_execution_group(:buy_merge, 1, 0, 0.4, 1.0)])
+        @test buy_merge_fee.total_l2_gas_units == benchmark_buy_merge_base_l2_units + benchmark_buy_merge_per_buy_leg_l2_units
+        @test buy_merge_fee.total_calldata_bytes == 594
+        @test buy_merge_fee.total_fee ≈ 0.0002045169542184878 atol=1e-18
+
+        packed_direct_buys = price_execution_groups([
+            replay_execution_group(:direct_buy, 1, 0, 0.4, 0.0),
+            replay_execution_group(:direct_buy, 1, 0, 0.4, 0.0),
+        ])
+        @test packed_direct_buys.group_count == 2
+        @test packed_direct_buys.tx_count == 1
+        @test packed_direct_buys.total_calldata_bytes == 658
+        @test packed_direct_buys.total_fee ≈ 0.00034929968134404874 atol=1e-18
+    end
+
+    @testset "deep trading fixture translation" begin
+        @test dt_case_ids == sort!(String.(collect(propertynames(dt_expected_payload))))
+        @test dt_case_ids == sort!(String.(collect(propertynames(dt_net_expected_payload))))
+
+        for case_id in dt_case_ids
+            benchmark = build_case_from_deep_trading(case_id)
+            raw_expected = deep_trading_raw_expected(case_id)
+            net_expected = deep_trading_net_expected(case_id)
+
+            @test benchmark.case_id == case_id
+            @test benchmark.objective isa EndowmentLinear
+            @test length(benchmark.markets) == length(benchmark.predictions)
+            @test length(benchmark.amm_edges) == length(benchmark.predictions)
+            @test sum(benchmark.predictions) ≈ 1.0 atol=1e-12
+            @test benchmark.deep_trading_direct_ev ≈ raw_expected.direct_ev atol=1e-12
+            @test benchmark.deep_trading_mixed_ev ≈ raw_expected.mixed_ev atol=1e-12
+            @test benchmark.deep_trading_full_rebalance_only_ev ≈ raw_expected.full_rebalance_only_ev atol=1e-12
+            @test net_expected.best_family in ("direct", "mixed")
+            @test isfinite(net_expected.direct_net_ev)
+            @test isfinite(net_expected.mixed_net_ev)
+            @test isfinite(net_expected.best_net_ev)
+        end
+
+        benchmark = build_case_from_deep_trading(dt_focus_case_id)
+        raw_expected = deep_trading_raw_expected(dt_focus_case_id)
         @test benchmark.initial_ev ≈ 150.22005815295148 atol=1e-9
-        @test benchmark.objective isa EndowmentLinear
         @test benchmark.cash0 ≈ 150.0 atol=1e-12
         @test sum(benchmark.holdings0) ≈ 20.0 atol=1e-12
-        @test sum(benchmark.predictions) ≈ 1.0 atol=1e-12
         @test sum(benchmark.current_prices) ≈ 1.0442842940877832 atol=1e-12
         @test all(==(1), benchmark.tick_lo)
         @test all(==(92_108), benchmark.tick_hi)
-        @test benchmark.deep_trading_direct_ev ≈ dt_direct_ev atol=1e-12
-        @test benchmark.deep_trading_mixed_ev ≈ dt_mixed_ev atol=1e-12
-        @test benchmark.deep_trading_full_rebalance_only_ev ≈ dt_full_rebalance_only_ev atol=1e-12
+        @test benchmark.deep_trading_direct_ev ≈ raw_expected.direct_ev atol=1e-12
+        @test benchmark.deep_trading_mixed_ev ≈ raw_expected.mixed_ev atol=1e-12
+        @test benchmark.deep_trading_full_rebalance_only_ev ≈ raw_expected.full_rebalance_only_ev atol=1e-12
     end
 
     @testset "deep trading single-tick parity" begin
-        benchmark = build_case_from_deep_trading(dt_case_id)
-        for i in eachindex(benchmark.markets)
-            market = benchmark.markets[i]
-            canonical_pool = ReplaySingleTickPool(
-                market.current_price,
-                market.buy_limit_price,
-                market.sell_limit_price,
-                market.liquidity_raw,
-                market.γ,
-            )
-            edge = benchmark.amm_edges[i]::SingleTickBenchmarkEdge{Float64}
-            edge_pool = edge_derived_pool(edge)
-            @test edge_pool.current_price ≈ canonical_pool.current_price atol=1e-12
-            @test edge_pool.buy_limit_price ≈ canonical_pool.buy_limit_price atol=1e-12
-            @test edge_pool.sell_limit_price ≈ canonical_pool.sell_limit_price atol=1e-12
-            @test edge_pool.liquidity_raw ≈ canonical_pool.liquidity_raw atol=1e-12
-            @test max_buy_tokens(edge_pool) ≈ max_buy_tokens(canonical_pool) atol=1e-10
-            @test max_sell_tokens(edge_pool) ≈ max_sell_tokens(canonical_pool) atol=1e-10
-            for frac in (0.25, 0.5, 0.9)
-                buy_amount = frac * max_buy_tokens(canonical_pool)
-                sell_amount = frac * max_sell_tokens(canonical_pool)
-                edge_buy = buy_preview(edge_pool, buy_amount)
-                pool_buy = buy_preview(canonical_pool, buy_amount)
-                @test edge_buy[1] ≈ pool_buy[1] atol=1e-10
-                @test edge_buy[2] ≈ pool_buy[2] atol=1e-10
-                @test edge_buy[3] ≈ pool_buy[3] atol=1e-10
+        for case_id in dt_case_ids
+            benchmark = build_case_from_deep_trading(case_id)
+            for i in eachindex(benchmark.markets)
+                market = benchmark.markets[i]
+                canonical_pool = ReplaySingleTickPool(
+                    market.current_price,
+                    market.buy_limit_price,
+                    market.sell_limit_price,
+                    market.liquidity_raw,
+                    market.γ,
+                )
+                edge = benchmark.amm_edges[i]::SingleTickBenchmarkEdge{Float64}
+                edge_pool = edge_derived_pool(edge)
+                @test edge_pool.current_price ≈ canonical_pool.current_price atol=1e-12
+                @test edge_pool.buy_limit_price ≈ canonical_pool.buy_limit_price atol=1e-12
+                @test edge_pool.sell_limit_price ≈ canonical_pool.sell_limit_price atol=1e-12
+                @test edge_pool.liquidity_raw ≈ canonical_pool.liquidity_raw atol=1e-12
+                @test max_buy_tokens(edge_pool) ≈ max_buy_tokens(canonical_pool) atol=1e-10
+                @test max_sell_tokens(edge_pool) ≈ max_sell_tokens(canonical_pool) atol=1e-10
+                for frac in (0.25, 0.5, 0.9)
+                    buy_amount = frac * max_buy_tokens(canonical_pool)
+                    sell_amount = frac * max_sell_tokens(canonical_pool)
+                    edge_buy = buy_preview(edge_pool, buy_amount)
+                    pool_buy = buy_preview(canonical_pool, buy_amount)
+                    @test edge_buy[1] ≈ pool_buy[1] atol=1e-10
+                    @test edge_buy[2] ≈ pool_buy[2] atol=1e-10
+                    @test edge_buy[3] ≈ pool_buy[3] atol=1e-10
 
-                edge_sell = sell_preview(edge_pool, sell_amount)
-                pool_sell = sell_preview(canonical_pool, sell_amount)
-                @test edge_sell[1] ≈ pool_sell[1] atol=1e-10
-                @test edge_sell[2] ≈ pool_sell[2] atol=1e-10
-                @test edge_sell[3] ≈ pool_sell[3] atol=1e-10
-            end
+                    edge_sell = sell_preview(edge_pool, sell_amount)
+                    pool_sell = sell_preview(canonical_pool, sell_amount)
+                    @test edge_sell[1] ≈ pool_sell[1] atol=1e-10
+                    @test edge_sell[2] ≈ pool_sell[2] atol=1e-10
+                    @test edge_sell[3] ≈ pool_sell[3] atol=1e-10
+                end
 
-            x = zeros(2)
-            for frac in (0.25, 0.5, 0.9)
-                buy_target = canonical_pool.current_price + frac * (canonical_pool.buy_limit_price - canonical_pool.current_price)
-                expected_buy = buy_to_price(canonical_pool, buy_target)
-                ForecastFlows.find_arb!(x, edge, [1.0, buy_target / canonical_pool.γ])
-                @test x[1] ≈ -expected_buy[2] atol=1e-10
-                @test x[2] ≈ expected_buy[1] atol=1e-10
+                x = zeros(2)
+                for frac in (0.25, 0.5, 0.9)
+                    buy_target = canonical_pool.current_price + frac * (canonical_pool.buy_limit_price - canonical_pool.current_price)
+                    expected_buy = buy_to_price(canonical_pool, buy_target)
+                    ForecastFlows.find_arb!(x, edge, [1.0, buy_target / canonical_pool.γ])
+                    @test x[1] ≈ -expected_buy[2] atol=1e-10
+                    @test x[2] ≈ expected_buy[1] atol=1e-10
 
-                sell_target = canonical_pool.current_price - frac * (canonical_pool.current_price - canonical_pool.sell_limit_price)
-                expected_sell = sell_to_price(canonical_pool, sell_target)
-                ForecastFlows.find_arb!(x, edge, [1.0, canonical_pool.γ * sell_target])
-                @test x[1] ≈ expected_sell[2] atol=1e-10
-                @test x[2] ≈ -expected_sell[1] atol=1e-10
+                    sell_target = canonical_pool.current_price - frac * (canonical_pool.current_price - canonical_pool.sell_limit_price)
+                    expected_sell = sell_to_price(canonical_pool, sell_target)
+                    ForecastFlows.find_arb!(x, edge, [1.0, canonical_pool.γ * sell_target])
+                    @test x[1] ≈ expected_sell[2] atol=1e-10
+                    @test x[2] ≈ -expected_sell[1] atol=1e-10
+                end
             end
         end
     end
 
+    @testset "public prediction-market facade" begin
+        @testset "input validation" begin
+            @test_throws ArgumentError ConstantProductMarketSpec("", 1, 100.0, 100.0, 1.0)
+            @test_throws ArgumentError ConstantProductMarketSpec("m1", 0, 100.0, 100.0, 1.0)
+            @test_throws ArgumentError UniV3MarketSpec("u1", 1, 1.0, [0.5, 1.0], [100.0, 100.0], 0.997)
+            @test_throws ArgumentError PredictionMarketProblem(
+                [0.5, 0.5],
+                -1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 100.0, 100.0, 1.0),
+                ],
+            )
+            @test_throws ArgumentError PredictionMarketProblem(
+                [0.5, 0.5],
+                1.0,
+                [0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 100.0, 100.0, 1.0),
+                ],
+            )
+            @test_throws ArgumentError PredictionMarketProblem(
+                [0.5, 0.5],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 1, 100.0, 100.0, 1.0),
+                ],
+            )
+            @test_throws ArgumentError PredictionMarketProblem(
+                [0.5, 0.5],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m1", 2, 100.0, 100.0, 1.0),
+                ],
+            )
+        end
+
+        @testset "facade parity" begin
+            direct_problem = PredictionMarketProblem(
+                [0.25, 0.75],
+                0.0,
+                [1.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 200.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 100.0, 200.0, 1.0),
+                ],
+            )
+            direct_result = solve_prediction_market(direct_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+            direct_solver = solve_prediction_market_low_level(direct_problem; mode=:direct_only)
+
+            @test direct_result.status == "certified"
+            @test direct_result.final_cash ≈ direct_problem.initial_cash + direct_solver.y[1] atol=1e-8
+            @test direct_result.final_holdings ≈ direct_problem.initial_holdings .+ direct_solver.y[2:end] atol=1e-8
+            @test direct_result.final_ev ≈ direct_problem.initial_cash + dot(direct_problem.outcome_values, direct_problem.initial_holdings) + primal_objective(direct_solver) atol=1e-8
+
+            mixed_problem = PredictionMarketProblem(
+                [0.55, 0.45],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+            mixed_result = solve_prediction_market(mixed_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+            mixed_solver = solve_prediction_market_low_level(mixed_problem; mode=:mixed_enabled, split_bound=5.0)
+
+            @test mixed_result.status == "certified"
+            @test mixed_result.final_cash ≈ mixed_problem.initial_cash + mixed_solver.y[1] atol=1e-8
+            @test mixed_result.final_holdings ≈ mixed_problem.initial_holdings .+ mixed_solver.y[2:end] atol=1e-8
+            @test mixed_result.split_merge.mint ≈ 5.0 atol=1e-8
+            @test mixed_result.split_merge.merge ≈ 0.0 atol=1e-8
+        end
+
+        @testset "route extraction" begin
+            buy_problem = PredictionMarketProblem(
+                [0.8, 0.2],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 100.0, 200.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 200.0, 100.0, 1.0),
+                ],
+            )
+            buy_result = solve_prediction_market(buy_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+            @test length(buy_result.trades) == 1
+            @test buy_result.trades[1].market_id == "m1"
+            @test buy_result.trades[1].collateral_delta < 0.0
+            @test buy_result.trades[1].outcome_delta > 0.0
+
+            sell_problem = PredictionMarketProblem(
+                [0.25, 0.75],
+                0.0,
+                [1.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 200.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 100.0, 200.0, 1.0),
+                ],
+            )
+            sell_result = solve_prediction_market(sell_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+            sell_trade = only(filter(t -> t.market_id == "m1", sell_result.trades))
+            @test sell_trade.collateral_delta > 0.0
+            @test sell_trade.outcome_delta < 0.0
+
+            mint_problem = PredictionMarketProblem(
+                [0.55, 0.45],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+            mint_result = solve_prediction_market(mint_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+            @test mint_result.split_merge.mint > 0.0
+            @test any(t -> t.outcome_delta < 0.0, mint_result.trades)
+
+            merge_problem = PredictionMarketProblem(
+                [0.45, 0.55],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 70.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 30.0, 100.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+            merge_result = solve_prediction_market(merge_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, throw_on_fail=false, max_doublings=0)
+            @test merge_result.split_merge.merge > 0.0
+            @test any(t -> t.outcome_delta > 0.0, merge_result.trades)
+        end
+
+        @testset "public multi-tick support" begin
+            uni_problem = PredictionMarketProblem(
+                [0.2, 0.35],
+                0.0,
+                [1.0, 0.0],
+                [
+                    UniV3MarketSpec("u1", 1, 0.5, [UniV3LiquidityBand(0.25, 10.0), UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 12.0)], 0.997),
+                    UniV3MarketSpec("u2", 2, 0.5, [UniV3LiquidityBand(0.25, 8.0), UniV3LiquidityBand(1.0, 9.0), UniV3LiquidityBand(0.5, 11.0)], 0.997),
+                ],
+            )
+            uni_result = solve_prediction_market(uni_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+            @test uni_result.status == "certified"
+            @test length(uni_result.trades) == 1
+            @test uni_result.trades[1].market_id == "u1"
+            @test uni_result.trades[1].collateral_delta > 0.0
+            @test uni_result.trades[1].outcome_delta < 0.0
+            @test uni_problem.markets[1].lower_ticks == [1.0, 0.5, 0.25]
+            @test uni_problem.markets[1].liquidity ≈ [100.0, 144.0, 100.0] atol=1e-12
+        end
+
+        @testset "family comparison helper" begin
+            comparison_problem = PredictionMarketProblem(
+                [0.55, 0.45],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+            direct_result = solve_prediction_market(comparison_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+            mixed_result = solve_prediction_market(comparison_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+            comparison = compare_prediction_market_families(comparison_problem; pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+
+            @test comparison.direct_only.final_ev ≈ direct_result.final_ev atol=1e-8
+            @test comparison.direct_only.final_cash ≈ direct_result.final_cash atol=1e-8
+            @test comparison.mixed_enabled.final_ev ≈ mixed_result.final_ev atol=1e-8
+            @test comparison.mixed_enabled.split_merge.mint ≈ mixed_result.split_merge.mint atol=1e-8
+        end
+
+        @testset "worker protocol" begin
+            @test ForecastFlows._prediction_market_worker_error_code(ArgumentError("bad")) == "invalid_request"
+            @test ForecastFlows._prediction_market_worker_error_code(ForecastFlows._PredictionMarketWorkerSolveFailed("bad")) == "solve_failed"
+            @test ForecastFlows._prediction_market_worker_error_code(ErrorException("bad")) == "internal_error"
+
+            worker_problem = PredictionMarketProblem(
+                [0.55, 0.45],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+            problem_json = JSON3.write(worker_problem)
+            roundtrip_problem = JSON3.read(problem_json)
+            @test roundtrip_problem.markets[1].type == "constant_product"
+            @test String(roundtrip_problem.markets[2].market_id) == "m2"
+
+            worker_uni_problem = PredictionMarketProblem(
+                [0.2, 0.35],
+                0.0,
+                [1.0, 0.0],
+                [
+                    UniV3MarketSpec("u1", 1, 0.5, [UniV3LiquidityBand(0.25, 10.0), UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 12.0)], 0.997),
+                    UniV3MarketSpec("u2", 2, 0.5, [UniV3LiquidityBand(0.25, 8.0), UniV3LiquidityBand(1.0, 9.0), UniV3LiquidityBand(0.5, 11.0)], 0.997),
+                ],
+            )
+            worker_uni_json = JSON3.read(JSON3.write(worker_uni_problem))
+            @test worker_uni_json.markets[1].type == "univ3"
+            @test hasproperty(worker_uni_json.markets[1], :bands)
+            @test !hasproperty(worker_uni_json.markets[1], :lower_ticks)
+            @test worker_uni_json.markets[1].bands[1].lower_price == 1.0
+
+            legacy_uni_response = ForecastFlows.prediction_market_worker_response(JSON3.write((
+                protocol_version=1,
+                request_id="legacy-uni",
+                command="solve_prediction_market",
+                mode="direct_only",
+                problem=(
+                    outcome_values=[0.2, 0.35],
+                    initial_cash=0.0,
+                    initial_holdings=[1.0, 0.0],
+                    markets=[
+                        (type="univ3", market_id="u1", outcome_index=1, current_price=0.5, lower_ticks=[1.0, 0.5, 0.25], liquidity=[100.0, 144.0, 100.0], fee_multiplier=0.997),
+                        (type="univ3", market_id="u2", outcome_index=2, current_price=0.5, lower_ticks=[1.0, 0.5, 0.25], liquidity=[81.0, 121.0, 64.0], fee_multiplier=0.997),
+                    ],
+                ),
+                solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+            )))
+            @test legacy_uni_response.ok
+            @test legacy_uni_response.result.mode == "direct_only"
+            @test legacy_uni_response.result.trades[1].market_id == "u1"
+
+            worker_script = joinpath(dirname(@__DIR__), "bin", "forecastflows-worker.jl")
+            cmd = `$(Base.julia_cmd()) --project=$(dirname(@__DIR__)) $(worker_script)`
+            requests = [
+                (protocol_version=1, request_id="health", command="health"),
+                (
+                    protocol_version=1,
+                    request_id="solve",
+                    command="solve_prediction_market",
+                    mode="mixed_enabled",
+                    problem=worker_problem,
+                    solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="compare",
+                    command="compare_prediction_market_families",
+                    problem=worker_problem,
+                    solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="uni",
+                    command="solve_prediction_market",
+                    mode="direct_only",
+                    problem=worker_uni_problem,
+                    solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="wei",
+                    command="solve_prediction_market",
+                    mode="direct_only",
+                    problem=(
+                        outcome_values=[0.55, 0.45],
+                        initial_cash="1000000000000000000",
+                        initial_holdings=[0.0, 0.0],
+                        markets=[
+                            (type="constant_product", market_id="m1", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                        ],
+                    ),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="bool",
+                    command="solve_prediction_market",
+                    mode="direct_only",
+                    problem=(
+                        outcome_values=[0.55, 0.45],
+                        initial_cash=true,
+                        initial_holdings=[0.0, 0.0],
+                        markets=[
+                            (type="constant_product", market_id="m1", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                        ],
+                    ),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="invalid",
+                    command="solve_prediction_market",
+                    mode="bad_mode",
+                    problem=worker_problem,
+                ),
+                (
+                    protocol_version=1,
+                    request_id="missing-market-id",
+                    command="solve_prediction_market",
+                    problem=(
+                        outcome_values=[0.55, 0.45],
+                        initial_cash=1.0,
+                        initial_holdings=[0.0, 0.0],
+                        markets=[
+                            (type="constant_product", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                        ],
+                    ),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="missing-band-field",
+                    command="solve_prediction_market",
+                    mode="direct_only",
+                    problem=(
+                        outcome_values=[0.2, 0.35],
+                        initial_cash=0.0,
+                        initial_holdings=[1.0, 0.0],
+                        markets=[
+                            (type="univ3", market_id="u1", outcome_index=1, current_price=0.5, bands=[(lower_price=1.0,)], fee_multiplier=0.997),
+                            (type="univ3", market_id="u2", outcome_index=2, current_price=0.5, bands=[(lower_price=1.0, liquidity_L=9.0)], fee_multiplier=0.997),
+                        ],
+                    ),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="bad-max-iter",
+                    command="solve_prediction_market",
+                    problem=worker_problem,
+                    solve_options=(max_iter="oops",),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="bad-certify",
+                    command="solve_prediction_market",
+                    problem=worker_problem,
+                    solve_options=(certify="oops",),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="bad-number",
+                    command="solve_prediction_market",
+                    problem=(
+                        outcome_values=[0.55, 0.45],
+                        initial_cash="oops",
+                        initial_holdings=[0.0, 0.0],
+                        markets=[
+                            (type="constant_product", market_id="m1", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                        ],
+                    ),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="missing-problem",
+                    command="solve_prediction_market",
+                ),
+                (
+                    protocol_version=2,
+                    request_id="bad-version",
+                    command="health",
+                ),
+                (
+                    protocol_version=1,
+                    request_id="bad-command",
+                    command="wat",
+                ),
+                (
+                    protocol_version=1,
+                    request_id="solve-failed",
+                    command="solve_prediction_market",
+                    mode="mixed_enabled",
+                    problem=worker_problem,
+                    solve_options=(throw_on_fail=true, max_iter=1, max_fun=1, max_doublings=0),
+                ),
+            ]
+            input = join(JSON3.write.(requests), "\n") * "\n"
+            output = read(pipeline(IOBuffer(input), cmd), String)
+            response_lines = filter(!isempty, split(chomp(output), '\n'))
+            responses = JSON3.read.(response_lines)
+
+            @test length(responses) == 16
+            @test responses[1].ok
+            @test responses[1].request_id == "health"
+            @test responses[1].result.status == "ok"
+            @test responses[1].result.supported_interfaces == ["julia_facade", "json_worker"]
+            @test responses[1].result.outcome_indexing == "1-based"
+            @test responses[1].result.numeric_units == "decimal token units"
+            @test responses[1].result.execution_model == "serial"
+
+            @test responses[2].ok
+            @test responses[2].request_id == "solve"
+            @test responses[2].result.mode == "mixed_enabled"
+            @test responses[2].result.split_merge.mint > 0.0
+
+            @test responses[3].ok
+            @test responses[3].request_id == "compare"
+            @test responses[3].result.direct_only.mode == "direct_only"
+            @test responses[3].result.mixed_enabled.mode == "mixed_enabled"
+
+            @test responses[4].ok
+            @test responses[4].request_id == "uni"
+            @test responses[4].result.mode == "direct_only"
+            @test responses[4].result.trades[1].market_id == "u1"
+
+            @test !responses[5].ok
+            @test responses[5].request_id == "wei"
+            @test responses[5].error.code == "invalid_request"
+            @test occursin("decimal-scaled token units", String(responses[5].error.message))
+
+            @test !responses[6].ok
+            @test responses[6].request_id == "bool"
+            @test responses[6].error.code == "invalid_request"
+            @test occursin("numeric, not boolean", String(responses[6].error.message))
+
+            @test !responses[7].ok
+            @test responses[7].request_id == "invalid"
+            @test responses[7].error.code == "invalid_request"
+            @test occursin("mode must be :direct_only or :mixed_enabled", String(responses[7].error.message))
+
+            @test !responses[8].ok
+            @test responses[8].request_id == "missing-market-id"
+            @test responses[8].error.code == "invalid_request"
+            @test occursin("problem.markets[1].market_id is required", String(responses[8].error.message))
+
+            @test !responses[9].ok
+            @test responses[9].request_id == "missing-band-field"
+            @test responses[9].error.code == "invalid_request"
+            @test occursin("problem.markets[1].bands[1].liquidity_L is required", String(responses[9].error.message))
+
+            @test !responses[10].ok
+            @test responses[10].request_id == "bad-max-iter"
+            @test responses[10].error.code == "invalid_request"
+            @test occursin("solve_options.max_iter must be parseable as Float64", String(responses[10].error.message))
+
+            @test !responses[11].ok
+            @test responses[11].request_id == "bad-certify"
+            @test responses[11].error.code == "invalid_request"
+            @test occursin("solve_options.certify must be boolean", String(responses[11].error.message))
+
+            @test !responses[12].ok
+            @test responses[12].request_id == "bad-number"
+            @test responses[12].error.code == "invalid_request"
+            @test occursin("problem.initial_cash must be parseable as Float64", String(responses[12].error.message))
+
+            @test !responses[13].ok
+            @test responses[13].request_id == "missing-problem"
+            @test responses[13].error.code == "invalid_request"
+            @test occursin("problem is required", String(responses[13].error.message))
+
+            @test !responses[14].ok
+            @test responses[14].request_id == "bad-version"
+            @test responses[14].error.code == "invalid_request"
+            @test occursin("unsupported protocol_version 2", String(responses[14].error.message))
+
+            @test !responses[15].ok
+            @test responses[15].request_id == "bad-command"
+            @test responses[15].error.code == "invalid_request"
+            @test occursin("unsupported command: wat", String(responses[15].error.message))
+
+            @test !responses[16].ok
+            @test responses[16].request_id == "solve-failed"
+            @test responses[16].error.code == "solve_failed"
+            @test occursin("failed certification", String(responses[16].error.message))
+
+            malformed_response = JSON3.read(String(read(pipeline(IOBuffer("{\n"), cmd), String)))
+            @test !malformed_response.ok
+            @test isnothing(malformed_response.request_id)
+            @test malformed_response.error.code == "invalid_request"
+            @test occursin("invalid JSON", String(malformed_response.error.message))
+        end
+
+        @testset "release helper ergonomics" begin
+            include(joinpath(dirname(@__DIR__), "bin", "build-worker-sysimage.jl"))
+
+            helper_root = joinpath(tempdir(), "forecastflows-release-helper")
+            default_sysimage = forecastflows_default_worker_sysimage_path(helper_root)
+            @test default_sysimage == joinpath(helper_root, "build", "forecastflows-worker.$(Libdl.dlext)")
+            @test occursin("/build/", read(joinpath(dirname(@__DIR__), ".gitignore"), String))
+        end
+    end
+
     if get(ENV, benchmark_opt_in_env, "0") == "1"
-        @testset "deep trading 98-market benchmark" begin
-            benchmark = build_case_from_deep_trading(dt_case_id)
+        @testset "deep trading net-ev benchmark sweep" begin
             benchmark_pgtol = 1e-6
             benchmark_max_iter = 10_000
             benchmark_max_fun = 20_000
+            summary_rows = NamedTuple[]
 
-            direct = solve_direct_benchmark(
-                benchmark;
-                method=:auto,
-                pgtol=benchmark_pgtol,
-                max_iter=benchmark_max_iter,
-                max_fun=benchmark_max_fun,
-            )
-            mixed = solve_mixed_benchmark(
-                benchmark;
-                method=:auto,
-                pgtol=benchmark_pgtol,
-                max_iter=benchmark_max_iter,
-                max_fun=benchmark_max_fun,
-            )
-
-            direct_route = desired_route_from_solver(benchmark, direct.solver)
-            mixed_route = desired_route_from_solver(benchmark, mixed.solver)
-            direct_replay = replay_desired_route(benchmark, direct_route)
-            mixed_replay = replay_desired_route(benchmark, mixed_route)
-            direct_certified = !isnothing(direct.solver.certificate) && direct.solver.certificate.passed
-            mixed_certified = !isnothing(mixed.solver.certificate) && mixed.solver.certificate.passed
-            direct_raw_upper_ev = direct_certified ? direct_route.raw_upper_ev : NaN
-            mixed_raw_upper_ev = mixed_certified ? mixed_route.raw_upper_ev : NaN
-
-            @test direct_certified
-            @test mixed_certified
-            @test direct_replay.final_cash >= -1e-8
-            @test mixed_replay.final_cash >= -1e-8
-            @test all(direct_replay.final_holdings .>= -1e-8)
-            @test all(mixed_replay.final_holdings .>= -1e-8)
-            @test isfinite(direct_replay.final_raw_ev)
-            @test isfinite(mixed_replay.final_raw_ev)
-            @test 0.0 <= direct_replay.fill_fraction <= 1.0
-            @test 0.0 <= mixed_replay.fill_fraction <= 1.0
-            @test direct_replay.final_raw_ev <= direct_raw_upper_ev + 1e-6
-            @test mixed_replay.final_raw_ev <= mixed_raw_upper_ev + 1e-6
-
-            run_gas_benchmark = get(ENV, benchmark_gas_opt_in_env, "0") == "1"
-            gas_certified = missing
-            gas_raw_upper_ev = missing
-            gas_replayed_executable_ev = missing
-            gas_net_upper_ev = missing
-            gas_action_count = missing
-            gas_solve_time = missing
-            gas_replay_counts = missing
-            gas_replay_residuals = missing
-
-            if run_gas_benchmark
-                gas_costs = vcat(fill(0.00018, length(benchmark.amm_edges)), [0.00021])
-                split_edge = SplitMergeEdge(copy(benchmark.split_nodes), mixed.split_bound)
-                s = Solver(
-                    flow_objective=benchmark.objective,
-                    edges=vcat(benchmark.amm_edges, Edge[split_edge]),
-                    n=benchmark.n,
+            for case_id in dt_case_ids
+                benchmark = build_case_from_deep_trading(case_id)
+                raw_expected = deep_trading_raw_expected(case_id)
+                net_expected = deep_trading_net_expected(case_id)
+                result = solve_benchmark_case(
+                    benchmark;
+                    method=:auto,
+                    pgtol=benchmark_pgtol,
+                    max_iter=benchmark_max_iter,
+                    max_fun=benchmark_max_fun,
                 )
-                result = solve_with_fixed_gas!(s, FixedGasModel(gas_costs); pgtol=benchmark_pgtol, max_iter=benchmark_max_iter, max_fun=benchmark_max_fun)
-                gas_route = desired_route_from_solver(benchmark, s)
-                gas_replay = replay_desired_route(benchmark, gas_route)
-                gas_certified = !isnothing(s.certificate) && s.certificate.passed
-                gas_raw_upper_ev = gas_certified ? gas_route.raw_upper_ev : NaN
-                gas_replayed_executable_ev = gas_replay.final_raw_ev
-                gas_net_upper_ev = gas_raw_upper_ev - sum(gas_costs[i] for i in eachindex(gas_costs) if result.kept_edges[i] && ForecastFlows.edge_is_active(s.xs[i]))
-                gas_action_count = active_edge_count(s)
-                gas_solve_time = result.solve_time
-                gas_replay_counts = gas_replay.counts
-                gas_replay_residuals = gas_replay.residuals
+
+                @test result.direct_certified
+                @test result.mixed_certified
+                @test result.direct_replay.final_cash >= -1e-8
+                @test result.mixed_replay.final_cash >= -1e-8
+                @test all(result.direct_replay.final_holdings .>= -1e-8)
+                @test all(result.mixed_replay.final_holdings .>= -1e-8)
+                @test isfinite(result.direct_replay.final_raw_ev)
+                @test isfinite(result.mixed_replay.final_raw_ev)
+                @test 0.0 <= result.direct_replay.fill_fraction <= 1.0
+                @test 0.0 <= result.mixed_replay.fill_fraction <= 1.0
+                @test result.direct_replay.final_raw_ev <= result.direct_raw_upper_ev + 1e-6
+                @test result.mixed_replay.final_raw_ev <= result.mixed_raw_upper_ev + 1e-6
+
+                @test result.direct_replay.final_raw_ev ≥ raw_expected.direct_ev - raw_fixture_atol(case_id, :direct)
+                @test result.mixed_replay.final_raw_ev ≥ raw_expected.mixed_ev - raw_fixture_atol(case_id, :mixed)
+                @test result.direct_net_ev ≈ net_expected.direct_net_ev atol=1e-9
+                @test result.mixed_net_ev ≈ net_expected.mixed_net_ev atol=1e-9
+                @test result.best_family == net_expected.best_family
+                @test result.best_net_ev ≈ net_expected.best_net_ev atol=1e-9
+
+                push!(summary_rows, (
+                    case_id=case_id,
+                    ev_before=benchmark.initial_ev,
+                    direct_raw_upper_ev=result.direct_raw_upper_ev,
+                    direct_replayed_raw_ev=result.direct_replay.final_raw_ev,
+                    direct_net_ev=result.direct_net_ev,
+                    mixed_raw_upper_ev=result.mixed_raw_upper_ev,
+                    mixed_replayed_raw_ev=result.mixed_replay.final_raw_ev,
+                    mixed_net_ev=result.mixed_net_ev,
+                    best_family=result.best_family,
+                    best_net_ev=result.best_net_ev,
+                    gap_to_dt_direct=result.direct_replay.final_raw_ev - raw_expected.direct_ev,
+                    gap_to_dt_mixed=result.mixed_replay.final_raw_ev - raw_expected.mixed_ev,
+                    direct_action_count=active_edge_count(result.direct.solver),
+                    mixed_action_count=active_edge_count(result.mixed.solver),
+                    direct_group_count=result.direct_fees.group_count,
+                    mixed_group_count=result.mixed_fees.group_count,
+                    direct_tx_count=result.direct_fees.tx_count,
+                    mixed_tx_count=result.mixed_fees.tx_count,
+                    direct_fee=result.direct_fees.total_fee,
+                    mixed_fee=result.mixed_fees.total_fee,
+                    direct_calldata_bytes=result.direct_fees.total_calldata_bytes,
+                    mixed_calldata_bytes=result.mixed_fees.total_calldata_bytes,
+                    split_flow=result.mixed.split_flow,
+                    split_bound=result.mixed.split_bound,
+                ))
             end
 
-            @info "deep-trading 98-market benchmark" ev_before=benchmark.initial_ev direct_certified=direct_certified mixed_certified=mixed_certified gas_enabled=run_gas_benchmark gas_certified=gas_certified direct_raw_upper_ev=direct_raw_upper_ev direct_replayed_executable_ev=direct_replay.final_raw_ev direct_ev_gap=direct_certified ? direct_raw_upper_ev - direct_replay.final_raw_ev : NaN direct_fill_fraction=direct_replay.fill_fraction mixed_raw_upper_ev=mixed_raw_upper_ev mixed_replayed_executable_ev=mixed_replay.final_raw_ev mixed_ev_gap=mixed_raw_upper_ev - mixed_replay.final_raw_ev mixed_fill_fraction=mixed_replay.fill_fraction gas_raw_upper_ev=gas_raw_upper_ev gas_replayed_executable_ev=gas_replayed_executable_ev gas_net_upper_ev=gas_net_upper_ev gap_to_dt_direct=direct_replay.final_raw_ev - benchmark.deep_trading_direct_ev gap_to_dt_mixed=mixed_replay.final_raw_ev - benchmark.deep_trading_mixed_ev gap_to_dt_full_rebalance_only=mixed_replay.final_raw_ev - benchmark.deep_trading_full_rebalance_only_ev direct_action_count=active_edge_count(direct.solver) mixed_action_count=active_edge_count(mixed.solver) gas_action_count=gas_action_count split_flow=mixed.split_flow split_bound=mixed.split_bound direct_solve_time=direct.solve_time mixed_solve_time=mixed.solve_time gas_solve_time=gas_solve_time direct_replay_counts=direct_replay.counts mixed_replay_counts=mixed_replay.counts gas_replay_counts=gas_replay_counts direct_replay_residuals=direct_replay.residuals mixed_replay_residuals=mixed_replay.residuals gas_replay_residuals=gas_replay_residuals
+            @test any(row -> row.case_id == dt_focus_case_id && row.best_family == "mixed", summary_rows)
+            @info "deep-trading net-ev benchmark sweep" rows=summary_rows
         end
     end
 end

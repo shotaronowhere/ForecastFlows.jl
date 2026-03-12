@@ -16,6 +16,7 @@ paper/data/*
 /docs/build/
 /docs/src/examples/
 /docs/src/advanced/
+/build/
 
 # Local-only benchmark and assistant artifacts
 .gitmodules

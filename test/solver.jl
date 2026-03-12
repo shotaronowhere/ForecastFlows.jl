@@ -105,6 +105,19 @@ Random.seed!(1)
         @test subopt_i ≤ 1e-2
     end
 
+    s_memory = Solver(
+        flow_objective=LinearNonnegative([1.0, 0.5, 0.5]),
+        edges=Edge[
+            ProductTwoCoin([200.0, 100.0], 1.0, [1, 2]),
+            ProductTwoCoin([200.0, 100.0], 1.0, [1, 3]),
+            SplitMergeEdge([1, 2, 3], 2.0),
+        ],
+        n=3,
+    )
+    solve!(s_memory, verbose=false, memory=18)
+    @test s_memory.certificate.passed
+    @test primal_objective(s_memory) > 0.0
+
     # with edge costs
     Vis = [NonpositiveQuadratic(zeros(2)) for cfmm in cfmms]
     s_vi = Solver(

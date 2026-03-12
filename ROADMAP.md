@@ -1,7 +1,6 @@
-# Roadmap
+# Post-v1 Roadmap
 
-This file tracks the major items that remain after the first public
-prediction-market router commit.
+This file tracks the major items that remain after the v1 dependency release.
 
 ## Solver Research
 
@@ -11,18 +10,18 @@ prediction-market router commit.
 
 ## Execution Realism
 
-- Replace the rough fixed-charge gas proxy with grouped gas accounting
+- Add a shared execution-cost model that matches the production driver exactly
 - Add transaction packing and block-level gas budgeting
 - Add reserve freshness and robust-routing safeguards
 
 ## Benchmarking
 
-- Extend the benchmark harness beyond the single-tick 98-market case
-- Add multi-band UniV3 parity checks
+- Add shared net-EV fixtures against the external production solver
+- Extend the benchmark harness beyond the current single-tick Deep-Trading adapter
 - Tighten benchmark gating once the opt-in runs are stable in CI
 
 ## Productization
 
-- Build an on-chain execution layer from recovered actions
-- Add safety checks, monitoring, and failure reporting
-- Separate benchmark-only adapters from production execution code where needed
+- Evaluate embedded Julia or FFI only if worker IPC becomes the bottleneck
+- Expand the facade beyond the current one-collateral / one-market-per-outcome scope
+- Add a reference driver integration and production monitoring examples

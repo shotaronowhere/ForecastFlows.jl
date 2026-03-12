@@ -63,6 +63,7 @@ makedocs(;
     pages=[
         "Home" => "index.md",
         "Prediction Market Router" => "prediction_market_router.md",
+        "Integration Guide" => "integration.md",
         "Examples" => examples_nav,
         "Advanced Usage" => advanced_nav,
         "User Guide" => "guide.md",

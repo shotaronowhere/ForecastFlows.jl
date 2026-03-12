@@ -10,7 +10,7 @@ mint/merge hyperedge.
 
 ### Documentation Contents:
 ```@contents
-Pages = ["index.md", "prediction_market_router.md", "method.md", "guide.md", "api.md"]
+Pages = ["index.md", "prediction_market_router.md", "integration.md", "guide.md", "method.md", "api.md"]
 Depth = 1
 ```
 ##### Examples:
@@ -60,14 +60,17 @@ The prediction-market router is built on the same dual-decomposition idea:
 - one AMM edge per collateral/outcome market
 - one `SplitMergeEdge` with local ordering `[collateral, outcomes...]`
 
-The recommended public interface for new work is the root solver API:
+The recommended public interface for new prediction-market work is now the
+prediction-market facade:
 
-- `Solver`
-- `solve!`
-- `SplitMergeEdge`
-- `EndowmentLinear`
-- `certify_solution`
-- `solve_with_fixed_gas!`
+- `PredictionMarketProblem`
+- `ConstantProductMarketSpec`
+- `UniV3MarketSpec`
+- `solve_prediction_market`
+- `compare_prediction_market_families`
+
+The root solver API remains available underneath this facade for custom convex
+flow models and research work.
 
 The older two-node `problem` interface remains available as legacy code, but it
 is not the recommended entrypoint for prediction-market routing.
@@ -130,6 +133,6 @@ Check out the [Solution method](method.md) page for details.
 
 ## Getting Started
 
-Start with the [Prediction Market Router](@ref) page for the routing extension,
-then see the [User Guide](@ref) and the example pages for the generic solver
-interfaces.
+Start with the [Prediction Market Router](@ref) page and the
+[Integration Guide](integration.md) for dependency use, then see the
+[User Guide](@ref) and the example pages for the generic solver interfaces.

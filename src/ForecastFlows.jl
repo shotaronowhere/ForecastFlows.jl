@@ -1,9 +1,11 @@
 module ForecastFlows
 
-using LinearAlgebra, SparseArrays, StaticArrays
+using LinearAlgebra
 using ForwardDiff
+using JSON3
 using LBFGSB
 using Printf
+using StructTypes
 
 include("utils.jl")
 
@@ -17,6 +19,7 @@ include("objectives.jl")
 
 include("solver.jl")
 include("solver_bfgs.jl")
+include("prediction_market_api.jl")
 
 export Objective, grad_Ubar!, lower_limit, upper_limit
 export find_arb!, is_nonsmooth
@@ -32,5 +35,12 @@ export U, ∇U, Ubar, ∇Ubar
 
 # Edges
 export Edge, EdgeGain, EdgeClosedForm, ProductTwoCoin, SplitMergeEdge, UniV3
+
+# Prediction-market facade
+export PredictionMarketProblem, ConstantProductMarketSpec, UniV3MarketSpec
+export UniV3LiquidityBand
+export PredictionMarketTrade, SplitMergePlan, SolveCertificateSummary, PredictionMarketSolveResult
+export solve_prediction_market, compare_prediction_market_families
+export prediction_market_worker_response
 
 end

@@ -15,42 +15,94 @@ and replay reference.
 
 ## Recommended API
 
-Use the root solver interface:
+Use the prediction-market facade:
 
 ```julia
 using ForecastFlows
 
-objective = EndowmentLinear(vcat([1.0], predictions), vcat([cash0], holdings0))
-s = Solver(flow_objective=objective, edges=edges, n=length(predictions) + 1)
-solve!(s)
+problem = PredictionMarketProblem(
+    predictions,
+    cash0,
+    holdings0,
+    markets;
+    split_bound=split_bound,
+)
+
+result = solve_prediction_market(problem; mode=:mixed_enabled)
 ```
 
 The public routing surface for this extension is:
 
-- `Solver`
-- `solve!`
-- `SplitMergeEdge`
-- `EndowmentLinear`
-- `certify_solution`
-- `solve_with_fixed_gas!`
+- `PredictionMarketProblem`
+- `ConstantProductMarketSpec`
+- `UniV3MarketSpec`
+- `UniV3LiquidityBand`
+- `PredictionMarketTrade`
+- `SplitMergePlan`
+- `SolveCertificateSummary`
+- `PredictionMarketSolveResult`
+- `solve_prediction_market`
+- `compare_prediction_market_families`
+
+The lower-level `Solver` / `SplitMergeEdge` / `EndowmentLinear` interface
+remains available and is still the right escape hatch for custom routing
+experiments. The new facade is the stable package boundary for the standard
+one-collateral, one-market-per-outcome use case.
+
+For non-Julia drivers, the supported v1 production interface is the worker
+protocol, not embedded Julia or FFI.
 
 The benchmark-only single-tick edge and replay engine live in tests on purpose.
-They are comparison machinery for the 98-market fixture, not public package API.
+They are comparison machinery for the vendored Deep-Trading fixtures, not
+public package API.
 
-## 98-market benchmark
+## Worker integration
 
-The package ships an opt-in benchmark based on the realistic 98-market
-Deep-Trading fixture, under an aligned single-tick replay model.
+For Rust or other non-Julia drivers, use the worker:
 
-Validated raw results:
+```bash
+julia --project bin/forecastflows-worker.jl
+```
 
-- baseline EV: `150.22005815295148`
-- direct raw / replayed EV: `150.25828864961397` / `150.25828864961383`
-- mixed raw / replayed EV: `150.38032237147735` / `150.3803223714772`
+The worker uses newline-delimited JSON with `protocol_version = 1` and supports:
 
-Validated gas-proxy result:
+- `health`
+- `solve_prediction_market`
+- `compare_prediction_market_families`
 
-- gas-proxy net EV: `150.36336211734135`
+See the [Integration Guide](integration.md) for request and response shapes.
+That guide also documents the preferred `UniV3` liquidity shape and the
+decimal-unit convention for worker inputs. The worker is serial: one request at
+a time per process.
+
+## Deep-Trading benchmark sweep
+
+The package ships an opt-in benchmark sweep over the six vendored
+Deep-Trading fixtures, under an aligned single-tick replay model.
+
+The benchmark tracks three distinct quantities:
+
+- mixed convex raw upper bound from the continuous mixed-enabled solve
+- executable raw EV after replay
+- best-family executable net EV under the pinned Deep-Trading OP snapshot
+
+The pinned benchmark snapshot used by the test-local pricing layer is:
+
+- `gas_price_wei = 1_002_325`
+- `eth_usd = 3000`
+- `l1_fee_per_byte_wei = 1_643_855.3414634147`
+- `l1_data_fee_floor_susd = 0`
+
+The raw provenance fixture remains `test/fixtures/rebalancer_ab_expected.json`.
+The Julia-local net benchmark regression fixture is
+`test/fixtures/rebalancer_ab_net_expected.json`.
+
+For the heterogeneous 98-outcome L1-like case, the current benchmark winner is
+`mixed`, with best-family net EV `150.36411702995255`.
+
+This benchmark is a release regression benchmark under the aligned surrogate
+execution model. It is not an exact on-chain execution guarantee, and it should
+not be described as blanket proof of solver dominance over other systems.
 
 Run the opt-in raw benchmark with:
 
@@ -58,30 +110,35 @@ Run the opt-in raw benchmark with:
 FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK=1 julia --project -e 'using Pkg; Pkg.test()'
 ```
 
-Run the opt-in raw + gas-proxy benchmark with:
+Run the full manual release gate with:
 
 ```bash
-FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK=1 FORECASTFLOWS_RUN_DEEPTRADING_GAS_BENCHMARK=1 julia --project -e 'using Pkg; Pkg.test()'
+julia --project bin/release-check.jl
 ```
 
 ## Known Limitations
 
 - The solver certifies the continuous convex routing problem, not direct
   on-chain execution.
+- The public API returns route plans and certificates, not transaction bundles.
 - The executable benchmark value comes from a no-flash replay layer.
 - Split/merge recovery is specialized to a single `SplitMergeEdge`.
-- The current gas layer is a rough fixed-charge proxy.
-- The 98-market benchmark is opt-in and is not a default CI gate.
+- `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not the
+  Deep-Trading benchmark comparator.
+- The Deep-Trading benchmark sweep is opt-in and is not a default CI gate.
+- v1 scope is solver dependency use only; tx construction and chain interaction
+  stay outside this package.
 
 ## Benchmark provenance
 
 The benchmark comparison is apples-to-apples for raw EV under the aligned
-single-tick benchmark model. The gas-proxy number is Julia-local because the
-Deep-Trading grouped gas model is not reproduced here.
+single-tick replay model. The net-EV regression is Julia-local, but it is
+priced against a pinned Deep-Trading-style grouped gas snapshot instead of the
+generic fixed-charge pruning helper.
 
 Only the benchmark fixture data is shared with Deep-Trading. The convex solver,
-its exact split/merge hyperedge, and the replay adapter in this package are
-independent implementations.
+its split/merge hyperedge, the replay adapter, and the grouped pricing layer in
+this package are independent implementations.
 
 The benchmark fixtures themselves are vendored under `test/fixtures/`, with
 upstream commit provenance recorded in `test/fixtures/PROVENANCE.md`.

@@ -1,29 +1,31 @@
 name = "ForecastFlows"
 uuid = "9bd5dfd2-158c-4d47-bd7a-911f8b978178"
-version = "0.1.1"
+version = "1.0.0"
 authors = ["Theo Diamandis", "ForecastFlows contributors"]
 
 [deps]
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 LBFGSB = "5be7bae1-8223-5378-bac3-9e7378a2f6e6"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
-StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
 
 [compat]
 ForwardDiff = "1"
+JSON3 = "1"
 LBFGSB = "0.4.1"
 SparseArrays = "1.10"
-StaticArrays = "1.9"
+StructTypes = "1"
 julia = "1.10"
 
 [extras]
-JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "LogExpFunctions", "StatsBase", "JSON3"]
+test = ["Test", "Libdl", "LogExpFunctions", "StatsBase"]
