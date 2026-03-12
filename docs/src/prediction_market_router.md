@@ -28,7 +28,7 @@ problem = PredictionMarketProblem(
     split_bound=split_bound,
 )
 
-result = solve_prediction_market(problem; mode=:mixed_enabled)
+result = solve_prediction_market(problem; mode=:mixed_enabled, max_doublings=0, throw_on_fail=false)
 ```
 
 The public routing surface for this extension is:
@@ -43,6 +43,12 @@ The public routing surface for this extension is:
 - `PredictionMarketSolveResult`
 - `solve_prediction_market`
 - `compare_prediction_market_families`
+
+Prediction-market solves fail closed by default. If certification fails, or if a
+mixed solve still has a near-active split/merge bound after the allowed
+doublings, `solve_prediction_market` throws instead of quietly returning a
+clipped route. Pass `throw_on_fail=false` only when you explicitly want to
+inspect an uncertified result.
 
 The lower-level `Solver` / `SplitMergeEdge` / `EndowmentLinear` interface
 remains available and is still the right escape hatch for custom routing

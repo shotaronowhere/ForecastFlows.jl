@@ -246,12 +246,15 @@ end
 
 StructTypes.StructType(::Type{<:PredictionMarketProblem}) = StructTypes.Struct()
 StructTypes.StructType(::Type{<:UniV3LiquidityBand}) = StructTypes.Struct()
-StructTypes.StructType(::Type{<:PredictionMarketTrade}) = StructTypes.Struct()
-StructTypes.StructType(::Type{<:SplitMergePlan}) = StructTypes.Struct()
-StructTypes.StructType(::Type{<:SolveCertificateSummary}) = StructTypes.Struct()
-StructTypes.StructType(::Type{<:PredictionMarketSolveResult}) = StructTypes.Struct()
+StructTypes.StructType(::Type{<:PredictionMarketTrade}) = StructTypes.CustomStruct()
+StructTypes.StructType(::Type{<:SplitMergePlan}) = StructTypes.CustomStruct()
+StructTypes.StructType(::Type{<:SolveCertificateSummary}) = StructTypes.CustomStruct()
+StructTypes.StructType(::Type{<:PredictionMarketSolveResult}) = StructTypes.CustomStruct()
 StructTypes.StructType(::Type{<:ConstantProductMarketSpec}) = StructTypes.CustomStruct()
 StructTypes.StructType(::Type{<:UniV3MarketSpec}) = StructTypes.CustomStruct()
+
+_prediction_market_json_number(x::Real) = isfinite(x) ? x : nothing
+_prediction_market_json_vector(xs::AbstractVector{<:Real}) = [_prediction_market_json_number(x) for x in xs]
 
 StructTypes.lower(spec::ConstantProductMarketSpec) = (
     type="constant_product",
@@ -269,6 +272,44 @@ StructTypes.lower(spec::UniV3MarketSpec) = (
     current_price=spec.current_price,
     bands=[(lower_price=price, liquidity_L=sqrt(k)) for (price, k) in zip(spec.lower_ticks, spec.liquidity)],
     fee_multiplier=spec.fee_multiplier,
+)
+
+StructTypes.lower(trade::PredictionMarketTrade) = (
+    market_id=trade.market_id,
+    outcome_index=trade.outcome_index,
+    collateral_delta=_prediction_market_json_number(trade.collateral_delta),
+    outcome_delta=_prediction_market_json_number(trade.outcome_delta),
+)
+
+StructTypes.lower(plan::SplitMergePlan) = (
+    mint=_prediction_market_json_number(plan.mint),
+    merge=_prediction_market_json_number(plan.merge),
+)
+
+StructTypes.lower(cert::SolveCertificateSummary) = (
+    passed=cert.passed,
+    message=cert.message,
+    primal_value=_prediction_market_json_number(cert.primal_value),
+    dual_value=_prediction_market_json_number(cert.dual_value),
+    duality_gap=_prediction_market_json_number(cert.duality_gap),
+    target_residual=_prediction_market_json_number(cert.target_residual),
+    bound_residual=_prediction_market_json_number(cert.bound_residual),
+)
+
+StructTypes.lower(result::PredictionMarketSolveResult) = (
+    status=result.status,
+    mode=result.mode,
+    certificate=isnothing(result.certificate) ? nothing : StructTypes.lower(result.certificate),
+    solver_time_sec=_prediction_market_json_number(result.solver_time_sec),
+    initial_ev=_prediction_market_json_number(result.initial_ev),
+    final_ev=_prediction_market_json_number(result.final_ev),
+    ev_gain=_prediction_market_json_number(result.ev_gain),
+    initial_cash=_prediction_market_json_number(result.initial_cash),
+    final_cash=_prediction_market_json_number(result.final_cash),
+    initial_holdings=_prediction_market_json_vector(result.initial_holdings),
+    final_holdings=_prediction_market_json_vector(result.final_holdings),
+    trades=[StructTypes.lower(trade) for trade in result.trades],
+    split_merge=StructTypes.lower(result.split_merge),
 )
 
 function PredictionMarketProblem(
@@ -322,7 +363,7 @@ function PredictionMarketProblem(
 end
 
 """
-    solve_prediction_market(problem; mode=:direct_only, certify=true, throw_on_fail=false, max_doublings=6, kwargs...)
+    solve_prediction_market(problem; mode=:direct_only, certify=true, throw_on_fail=true, max_doublings=6, kwargs...)
 
 Solve a one-collateral prediction-market routing problem and return a pure-data
 [`PredictionMarketSolveResult`](@ref). `mode=:mixed_enabled` adds a single
@@ -333,7 +374,7 @@ function solve_prediction_market(
     problem::PredictionMarketProblem{T};
     mode::Symbol=:direct_only,
     certify::Bool=true,
-    throw_on_fail::Bool=false,
+    throw_on_fail::Bool=true,
     max_doublings::Int=6,
     kwargs...,
 ) where T
@@ -347,7 +388,7 @@ function solve_prediction_market(
 end
 
 """
-    compare_prediction_market_families(problem; certify=true, throw_on_fail=false, max_doublings=6, kwargs...)
+    compare_prediction_market_families(problem; certify=true, throw_on_fail=true, max_doublings=6, kwargs...)
 
 Run both `:direct_only` and `:mixed_enabled` prediction-market solves under the
 same settings and return `(direct_only=..., mixed_enabled=...)`.
@@ -355,7 +396,7 @@ same settings and return `(direct_only=..., mixed_enabled=...)`.
 function compare_prediction_market_families(
     problem::PredictionMarketProblem;
     certify::Bool=true,
-    throw_on_fail::Bool=false,
+    throw_on_fail::Bool=true,
     max_doublings::Int=6,
     kwargs...,
 )
@@ -368,11 +409,13 @@ end
 const PREDICTION_MARKET_WORKER_PROTOCOL_VERSION = 1
 const PREDICTION_MARKET_WORKER_SAFE_INTEGER_LIMIT = 9_007_199_254_740_991.0
 
-struct _PredictionMarketWorkerSolveFailed <: Exception
+struct _PredictionMarketSolveFailed <: Exception
     message::String
 end
 
-Base.showerror(io::IO, err::_PredictionMarketWorkerSolveFailed) = print(io, err.message)
+const _PredictionMarketWorkerSolveFailed = _PredictionMarketSolveFailed
+
+Base.showerror(io::IO, err::_PredictionMarketSolveFailed) = print(io, err.message)
 
 function _prediction_market_eltype(spec::ConstantProductMarketSpec{T}) where T
     return T
@@ -473,6 +516,47 @@ function _certificate_summary(cert::SolveCertificate{T}) where T
     )
 end
 
+function _append_prediction_market_message(existing::AbstractString, extra::AbstractString)
+    isempty(existing) && return String(extra)
+    occursin(extra, existing) && return String(existing)
+    return String(existing) * "; " * String(extra)
+end
+
+function _mark_prediction_market_uncertified(
+    result::PredictionMarketSolveResult{T},
+    message::AbstractString,
+) where T
+    cert = result.certificate
+    new_cert = if isnothing(cert)
+        nothing
+    else
+        SolveCertificateSummary{T}(
+            false,
+            _append_prediction_market_message(cert.message, message),
+            cert.primal_value,
+            cert.dual_value,
+            cert.duality_gap,
+            cert.target_residual,
+            cert.bound_residual,
+        )
+    end
+    return PredictionMarketSolveResult{T}(
+        "uncertified",
+        result.mode,
+        new_cert,
+        result.solver_time_sec,
+        result.initial_ev,
+        result.final_ev,
+        result.ev_gain,
+        result.initial_cash,
+        result.final_cash,
+        copy(result.initial_holdings),
+        copy(result.final_holdings),
+        copy(result.trades),
+        result.split_merge,
+    )
+end
+
 function _prediction_market_result(problem::PredictionMarketProblem{T}, s::Solver{T}, mode::Symbol, solve_time::Real) where T
     initial_ev = problem.initial_cash + dot(problem.outcome_values, problem.initial_holdings)
     final_cash = problem.initial_cash + s.y[1]
@@ -503,7 +587,7 @@ function _solve_prediction_market_once(
     mode::Symbol,
     split_bound::Union{Nothing,T}=nothing,
     certify::Bool=true,
-    throw_on_fail::Bool=false,
+    throw_on_fail::Bool=true,
     kwargs...,
 ) where T
     edges = _prediction_market_edges(problem, mode, split_bound)
@@ -512,7 +596,15 @@ function _solve_prediction_market_once(
         edges=edges,
         n=length(problem.outcome_values) + 1,
     )
-    solve_time = solve!(solver; certify=certify, throw_on_fail=throw_on_fail, kwargs...)
+    solve_time = try
+        solve!(solver; certify=certify, throw_on_fail=throw_on_fail, kwargs...)
+    catch err
+        if throw_on_fail && err isa ErrorException
+            message = sprint(showerror, err)
+            startswith(message, "solve! failed certification:") && throw(_PredictionMarketSolveFailed(message))
+        end
+        rethrow(err)
+    end
     return _prediction_market_result(problem, solver, mode, solve_time)
 end
 
@@ -520,14 +612,14 @@ function _solve_prediction_market_mixed(
     problem::PredictionMarketProblem{T};
     max_doublings::Int=6,
     certify::Bool=true,
-    throw_on_fail::Bool=false,
+    throw_on_fail::Bool=true,
     kwargs...,
 ) where T
     max_doublings >= 0 || throw(ArgumentError("max_doublings must be nonnegative"))
 
     split_bound = isnothing(problem.split_bound) ? _default_split_bound(problem) : problem.split_bound
     best_result = nothing
-    for _ in 0:max_doublings
+    for doubling in 0:max_doublings
         result = _solve_prediction_market_once(
             problem;
             mode=:mixed_enabled,
@@ -537,7 +629,16 @@ function _solve_prediction_market_mixed(
             kwargs...,
         )
         best_result = result
-        max(result.split_merge.mint, result.split_merge.merge) < convert(T, 0.8) * split_bound && return result
+        if max(result.split_merge.mint, result.split_merge.merge) < convert(T, 0.8) * split_bound
+            return result
+        end
+        if doubling == max_doublings
+            message = "split/merge bound remained near-active after $(max_doublings) doublings (bound=$(split_bound))"
+            if throw_on_fail
+                throw(_PredictionMarketSolveFailed(message))
+            end
+            return _mark_prediction_market_uncertified(result, message)
+        end
         split_bound *= convert(T, 2)
     end
     return best_result
@@ -701,7 +802,7 @@ function _prediction_market_problem_from_json(obj)
 end
 
 function _prediction_market_worker_kwargs(options)
-    isnothing(options) && return (throw_on_fail=false, solve_kwargs=(;))
+    isnothing(options) && return (throw_on_fail=true, solve_kwargs=(;))
 
     opts = _prediction_market_worker_object(options, "solve_options")
     kwargs = Pair{Symbol,Any}[]
@@ -726,7 +827,7 @@ function _prediction_market_worker_kwargs(options)
 
     throw_on_fail = hasproperty(opts, :throw_on_fail) ?
         _prediction_market_worker_bool(getproperty(opts, :throw_on_fail), "solve_options.throw_on_fail") :
-        false
+        true
     return (throw_on_fail=throw_on_fail, solve_kwargs=(; kwargs...))
 end
 
@@ -734,7 +835,7 @@ function _prediction_market_worker_maybe_throw_on_fail(result::PredictionMarketS
     !throw_on_fail && return result
     result.status == "uncertified" || return result
     message = isnothing(result.certificate) ? "solver returned uncertified result" : result.certificate.message
-    throw(_PredictionMarketWorkerSolveFailed("$command failed certification: $message"))
+    throw(_PredictionMarketSolveFailed("$command failed certification: $message"))
 end
 
 function _prediction_market_worker_maybe_throw_on_fail(result::NamedTuple, command::AbstractString, throw_on_fail::Bool)
@@ -746,12 +847,12 @@ function _prediction_market_worker_maybe_throw_on_fail(result::NamedTuple, comma
         message = isnothing(child.certificate) ? "solver returned uncertified result" : child.certificate.message
         push!(failures, "$(label): $message")
     end
-    isempty(failures) || throw(_PredictionMarketWorkerSolveFailed("$command failed certification: $(join(failures, "; "))"))
+    isempty(failures) || throw(_PredictionMarketSolveFailed("$command failed certification: $(join(failures, "; "))"))
     return result
 end
 
 _prediction_market_worker_error_code(err::ArgumentError) = "invalid_request"
-_prediction_market_worker_error_code(err::_PredictionMarketWorkerSolveFailed) = "solve_failed"
+_prediction_market_worker_error_code(err::_PredictionMarketSolveFailed) = "solve_failed"
 _prediction_market_worker_error_code(err::Exception) = "internal_error"
 
 """

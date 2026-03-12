@@ -1562,14 +1562,90 @@ end
                 ];
                 split_bound=5.0,
             )
-            mixed_result = solve_prediction_market(mixed_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+            mixed_result = solve_prediction_market(
+                mixed_problem;
+                mode=:mixed_enabled,
+                pgtol=1e-8,
+                max_iter=5_000,
+                max_fun=10_000,
+                max_doublings=0,
+                throw_on_fail=false,
+            )
             mixed_solver = solve_prediction_market_low_level(mixed_problem; mode=:mixed_enabled, split_bound=5.0)
 
-            @test mixed_result.status == "certified"
+            @test mixed_result.status == "uncertified"
             @test mixed_result.final_cash ≈ mixed_problem.initial_cash + mixed_solver.y[1] atol=1e-8
             @test mixed_result.final_holdings ≈ mixed_problem.initial_holdings .+ mixed_solver.y[2:end] atol=1e-8
             @test mixed_result.split_merge.mint ≈ 5.0 atol=1e-8
             @test mixed_result.split_merge.merge ≈ 0.0 atol=1e-8
+        end
+
+        @testset "release guardrails" begin
+            clipped_problem = PredictionMarketProblem(
+                [0.55, 0.45],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+            let err = try
+                    solve_prediction_market(clipped_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa ForecastFlows._PredictionMarketSolveFailed
+                @test occursin("split/merge bound remained near-active", sprint(showerror, err))
+            end
+
+            clipped_result = solve_prediction_market(
+                clipped_problem;
+                mode=:mixed_enabled,
+                pgtol=1e-8,
+                max_iter=5_000,
+                max_fun=10_000,
+                max_doublings=0,
+                throw_on_fail=false,
+            )
+            @test clipped_result.status == "uncertified"
+            @test occursin("split/merge bound remained near-active", clipped_result.certificate.message)
+            @test clipped_result.split_merge.mint ≈ 5.0 atol=1e-8
+
+            default_mixed_problem = PredictionMarketProblem(
+                [0.55, 0.45],
+                1.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                ],
+            )
+            let err = try
+                    solve_prediction_market(default_mixed_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa ForecastFlows._PredictionMarketSolveFailed
+                @test occursin("failed certification", sprint(showerror, err))
+            end
+
+            unsafe_result = solve_prediction_market(
+                default_mixed_problem;
+                mode=:mixed_enabled,
+                pgtol=1e-8,
+                max_iter=5_000,
+                max_fun=10_000,
+                throw_on_fail=false,
+            )
+            @test unsafe_result.status == "uncertified"
+            encoded = JSON3.write(unsafe_result)
+            parsed = JSON3.read(encoded)
+            @test isnothing(parsed.certificate.primal_value)
+            @test isnothing(parsed.certificate.duality_gap)
         end
 
         @testset "route extraction" begin
@@ -1612,7 +1688,15 @@ end
                 ];
                 split_bound=5.0,
             )
-            mint_result = solve_prediction_market(mint_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+            mint_result = solve_prediction_market(
+                mint_problem;
+                mode=:mixed_enabled,
+                pgtol=1e-8,
+                max_iter=5_000,
+                max_fun=10_000,
+                max_doublings=0,
+                throw_on_fail=false,
+            )
             @test mint_result.split_merge.mint > 0.0
             @test any(t -> t.outcome_delta < 0.0, mint_result.trades)
 
@@ -1663,8 +1747,23 @@ end
                 split_bound=5.0,
             )
             direct_result = solve_prediction_market(comparison_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
-            mixed_result = solve_prediction_market(comparison_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
-            comparison = compare_prediction_market_families(comparison_problem; pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+            mixed_result = solve_prediction_market(
+                comparison_problem;
+                mode=:mixed_enabled,
+                pgtol=1e-8,
+                max_iter=5_000,
+                max_fun=10_000,
+                max_doublings=0,
+                throw_on_fail=false,
+            )
+            comparison = compare_prediction_market_families(
+                comparison_problem;
+                pgtol=1e-8,
+                max_iter=5_000,
+                max_fun=10_000,
+                max_doublings=0,
+                throw_on_fail=false,
+            )
 
             @test comparison.direct_only.final_ev ≈ direct_result.final_ev atol=1e-8
             @test comparison.direct_only.final_cash ≈ direct_result.final_cash atol=1e-8
@@ -1737,6 +1836,14 @@ end
                     command="solve_prediction_market",
                     mode="mixed_enabled",
                     problem=worker_problem,
+                    solve_options=(throw_on_fail=false, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="clipped-default",
+                    command="solve_prediction_market",
+                    mode="mixed_enabled",
+                    problem=worker_problem,
                     solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
                 ),
                 (
@@ -1744,7 +1851,7 @@ end
                     request_id="compare",
                     command="compare_prediction_market_families",
                     problem=worker_problem,
-                    solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
+                    solve_options=(throw_on_fail=false, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
                 ),
                 (
                     protocol_version=1,
@@ -1753,6 +1860,22 @@ end
                     mode="direct_only",
                     problem=worker_uni_problem,
                     solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+                ),
+                (
+                    protocol_version=1,
+                    request_id="uncertified-json",
+                    command="solve_prediction_market",
+                    mode="mixed_enabled",
+                    problem=(
+                        outcome_values=[0.55, 0.45],
+                        initial_cash=1.0,
+                        initial_holdings=[0.0, 0.0],
+                        markets=[
+                            (type="constant_product", market_id="m1", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                        ],
+                    ),
+                    solve_options=(throw_on_fail=false, pgtol=1e-8, max_iter=5_000, max_fun=10_000),
                 ),
                 (
                     protocol_version=1,
@@ -1877,7 +2000,7 @@ end
             response_lines = filter(!isempty, split(chomp(output), '\n'))
             responses = JSON3.read.(response_lines)
 
-            @test length(responses) == 16
+            @test length(responses) == 18
             @test responses[1].ok
             @test responses[1].request_id == "health"
             @test responses[1].result.status == "ok"
@@ -1891,75 +2014,86 @@ end
             @test responses[2].result.mode == "mixed_enabled"
             @test responses[2].result.split_merge.mint > 0.0
 
-            @test responses[3].ok
-            @test responses[3].request_id == "compare"
-            @test responses[3].result.direct_only.mode == "direct_only"
-            @test responses[3].result.mixed_enabled.mode == "mixed_enabled"
+            @test !responses[3].ok
+            @test responses[3].request_id == "clipped-default"
+            @test responses[3].error.code == "solve_failed"
+            @test occursin("split/merge bound remained near-active", String(responses[3].error.message))
 
             @test responses[4].ok
-            @test responses[4].request_id == "uni"
-            @test responses[4].result.mode == "direct_only"
-            @test responses[4].result.trades[1].market_id == "u1"
+            @test responses[4].request_id == "compare"
+            @test responses[4].result.direct_only.mode == "direct_only"
+            @test responses[4].result.mixed_enabled.mode == "mixed_enabled"
 
-            @test !responses[5].ok
-            @test responses[5].request_id == "wei"
-            @test responses[5].error.code == "invalid_request"
-            @test occursin("decimal-scaled token units", String(responses[5].error.message))
+            @test responses[5].ok
+            @test responses[5].request_id == "uni"
+            @test responses[5].result.mode == "direct_only"
+            @test responses[5].result.trades[1].market_id == "u1"
 
-            @test !responses[6].ok
-            @test responses[6].request_id == "bool"
-            @test responses[6].error.code == "invalid_request"
-            @test occursin("numeric, not boolean", String(responses[6].error.message))
+            @test responses[6].ok
+            @test responses[6].request_id == "uncertified-json"
+            @test responses[6].result.status == "uncertified"
+            @test isnothing(responses[6].result.certificate.primal_value)
+            @test isnothing(responses[6].result.certificate.duality_gap)
 
             @test !responses[7].ok
-            @test responses[7].request_id == "invalid"
+            @test responses[7].request_id == "wei"
             @test responses[7].error.code == "invalid_request"
-            @test occursin("mode must be :direct_only or :mixed_enabled", String(responses[7].error.message))
+            @test occursin("decimal-scaled token units", String(responses[7].error.message))
 
             @test !responses[8].ok
-            @test responses[8].request_id == "missing-market-id"
+            @test responses[8].request_id == "bool"
             @test responses[8].error.code == "invalid_request"
-            @test occursin("problem.markets[1].market_id is required", String(responses[8].error.message))
+            @test occursin("numeric, not boolean", String(responses[8].error.message))
 
             @test !responses[9].ok
-            @test responses[9].request_id == "missing-band-field"
+            @test responses[9].request_id == "invalid"
             @test responses[9].error.code == "invalid_request"
-            @test occursin("problem.markets[1].bands[1].liquidity_L is required", String(responses[9].error.message))
+            @test occursin("mode must be :direct_only or :mixed_enabled", String(responses[9].error.message))
 
             @test !responses[10].ok
-            @test responses[10].request_id == "bad-max-iter"
+            @test responses[10].request_id == "missing-market-id"
             @test responses[10].error.code == "invalid_request"
-            @test occursin("solve_options.max_iter must be parseable as Float64", String(responses[10].error.message))
+            @test occursin("problem.markets[1].market_id is required", String(responses[10].error.message))
 
             @test !responses[11].ok
-            @test responses[11].request_id == "bad-certify"
+            @test responses[11].request_id == "missing-band-field"
             @test responses[11].error.code == "invalid_request"
-            @test occursin("solve_options.certify must be boolean", String(responses[11].error.message))
+            @test occursin("problem.markets[1].bands[1].liquidity_L is required", String(responses[11].error.message))
 
             @test !responses[12].ok
-            @test responses[12].request_id == "bad-number"
+            @test responses[12].request_id == "bad-max-iter"
             @test responses[12].error.code == "invalid_request"
-            @test occursin("problem.initial_cash must be parseable as Float64", String(responses[12].error.message))
+            @test occursin("solve_options.max_iter must be parseable as Float64", String(responses[12].error.message))
 
             @test !responses[13].ok
-            @test responses[13].request_id == "missing-problem"
+            @test responses[13].request_id == "bad-certify"
             @test responses[13].error.code == "invalid_request"
-            @test occursin("problem is required", String(responses[13].error.message))
+            @test occursin("solve_options.certify must be boolean", String(responses[13].error.message))
 
             @test !responses[14].ok
-            @test responses[14].request_id == "bad-version"
+            @test responses[14].request_id == "bad-number"
             @test responses[14].error.code == "invalid_request"
-            @test occursin("unsupported protocol_version 2", String(responses[14].error.message))
+            @test occursin("problem.initial_cash must be parseable as Float64", String(responses[14].error.message))
 
             @test !responses[15].ok
-            @test responses[15].request_id == "bad-command"
+            @test responses[15].request_id == "missing-problem"
             @test responses[15].error.code == "invalid_request"
-            @test occursin("unsupported command: wat", String(responses[15].error.message))
+            @test occursin("problem is required", String(responses[15].error.message))
 
             @test !responses[16].ok
-            @test responses[16].request_id == "solve-failed"
-            @test responses[16].error.code == "solve_failed"
-            @test occursin("failed certification", String(responses[16].error.message))
+            @test responses[16].request_id == "bad-version"
+            @test responses[16].error.code == "invalid_request"
+            @test occursin("unsupported protocol_version 2", String(responses[16].error.message))
+
+            @test !responses[17].ok
+            @test responses[17].request_id == "bad-command"
+            @test responses[17].error.code == "invalid_request"
+            @test occursin("unsupported command: wat", String(responses[17].error.message))
+
+            @test !responses[18].ok
+            @test responses[18].request_id == "solve-failed"
+            @test responses[18].error.code == "solve_failed"
+            @test occursin("failed certification", String(responses[18].error.message))
 
             malformed_response = JSON3.read(String(read(pipeline(IOBuffer("{\n"), cmd), String)))
             @test !malformed_response.ok

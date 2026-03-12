@@ -67,8 +67,15 @@ result = solve_prediction_market(
     max_iter=5_000,
     max_fun=10_000,
     max_doublings=0,
+    throw_on_fail=false,
 )
 ```
+
+Prediction-market solves now fail closed by default. If the solver cannot certify
+the route, or if a mixed solve exhausts `max_doublings` while the split/merge
+bound is still near-active, `solve_prediction_market` throws. Pass
+`throw_on_fail=false` only when you explicitly want to inspect an uncertified
+result.
 
 Returned data is deliberately abstract:
 
@@ -130,14 +137,19 @@ The worker speaks newline-delimited JSON on stdin/stdout.
 Example request:
 
 ```json
-{"protocol_version":1,"request_id":"solve-1","command":"solve_prediction_market","mode":"mixed_enabled","problem":{"outcome_values":[0.55,0.45],"initial_cash":1.0,"initial_holdings":[0.0,0.0],"markets":[{"type":"constant_product","market_id":"m1","outcome_index":1,"collateral_reserve":40.0,"outcome_reserve":100.0,"fee_multiplier":1.0},{"type":"constant_product","market_id":"m2","outcome_index":2,"collateral_reserve":70.0,"outcome_reserve":100.0,"fee_multiplier":1.0}],"split_bound":5.0},"solve_options":{"pgtol":1e-8,"max_iter":5000,"max_fun":10000,"max_doublings":0}}
+{"protocol_version":1,"request_id":"solve-1","command":"solve_prediction_market","mode":"mixed_enabled","problem":{"outcome_values":[0.55,0.45],"initial_cash":1.0,"initial_holdings":[0.0,0.0],"markets":[{"type":"constant_product","market_id":"m1","outcome_index":1,"collateral_reserve":40.0,"outcome_reserve":100.0,"fee_multiplier":1.0},{"type":"constant_product","market_id":"m2","outcome_index":2,"collateral_reserve":70.0,"outcome_reserve":100.0,"fee_multiplier":1.0}],"split_bound":5.0},"solve_options":{"throw_on_fail":false,"pgtol":1e-8,"max_iter":5000,"max_fun":10000,"max_doublings":0}}
 ```
 
 Example success response:
 
 ```json
-{"protocol_version":1,"request_id":"solve-1","ok":true,"command":"solve_prediction_market","result":{"status":"certified","mode":"mixed_enabled","trades":[{"market_id":"m1","outcome_index":1,"collateral_delta":0.6666661145101713,"outcome_delta":-1.6949138266566024},{"market_id":"m2","outcome_index":2,"collateral_delta":3.3333333236415967,"outcome_delta":-4.999999984735524}],"split_merge":{"mint":5.0,"merge":0.0}}}
+{"protocol_version":1,"request_id":"solve-1","ok":true,"command":"solve_prediction_market","result":{"status":"uncertified","mode":"mixed_enabled","trades":[{"market_id":"m1","outcome_index":1,"collateral_delta":0.6666661145101713,"outcome_delta":-1.6949138266566024},{"market_id":"m2","outcome_index":2,"collateral_delta":3.3333333236415967,"outcome_delta":-4.999999984735524}],"split_merge":{"mint":5.0,"merge":0.0}}}
 ```
+
+Worker solves also fail closed by default. To inspect an uncertified result over
+JSON, set `solve_options.throw_on_fail=false`; in that mode, any non-finite
+certificate numbers are encoded as `null` so the worker still returns valid
+JSON.
 
 Example error response:
 

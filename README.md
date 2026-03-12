@@ -58,8 +58,13 @@ problem = PredictionMarketProblem(
     split_bound=5.0,
 )
 
-result = solve_prediction_market(problem; mode=:mixed_enabled, max_doublings=0)
+result = solve_prediction_market(problem; mode=:mixed_enabled, max_doublings=0, throw_on_fail=false)
 ```
+
+Prediction-market solves fail closed by default. If certification fails, or if a
+mixed solve still has a near-active split/merge bound after the allowed
+doublings, the facade and worker return a solve failure unless you explicitly set
+`throw_on_fail=false` to inspect an uncertified result.
 
 Or run the worker and call it from Rust or another driver:
 
