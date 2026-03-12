@@ -1,90 +1,64 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 296" width="960" height="296" role="img" aria-labelledby="title desc">
-  <title id="title">Split or merge oracle as a scalar comparison</title>
-  <desc id="desc">A balance beam compares collateral price on the left against the sum of outcome prices on the right. Below are three smaller balances showing mint, no-op, and merge outcomes.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 248" width="960" height="248" role="img" aria-labelledby="title desc">
+  <title id="title">Split or merge oracle</title>
+  <desc id="desc">A simplified oracle diagram. A central balance compares collateral price against the sum of outcome prices. Below it, three cases show that if the sum of outcome prices is greater than collateral the action is mint, if equal the action is hold, and if less the action is merge.</desc>
   <defs>
     <style>
       .bg { fill: #ffffff; }
-      .beam { stroke: #2c2c2c; stroke-width: 2; stroke-linecap: round; fill: none; }
-      .light { stroke: #9aa1ab; stroke-width: 1.6; fill: none; }
-      .block { fill: none; stroke: #2c2c2c; stroke-width: 1.8; }
-      .blue { fill: #d6e4f0; stroke: #587ea3; stroke-width: 1.8; }
-      .warm { fill: #f2ddd4; stroke: #b56a4f; stroke-width: 1.8; }
+      .beam { fill: none; stroke: #2c2c2c; stroke-width: 2; stroke-linecap: round; }
+      .light { fill: none; stroke: #9aa1ab; stroke-width: 1.6; }
+      .block { fill: none; stroke: #2c2c2c; stroke-width: 2; }
+      .blueFill { fill: #d6e4f0; stroke: #587ea3; stroke-width: 1.8; }
+      .warmFill { fill: #f2ddd4; stroke: #b56a4f; stroke-width: 1.8; }
       .title { font: 600 18px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
-      .label { font: 500 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
       .hint { font: 500 12px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #6a7280; }
-      .actionBlue { font: 700 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #587ea3; }
-      .actionWarm { font: 700 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #b56a4f; }
-      .actionGray { font: 700 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #6a7280; }
-      .center { text-anchor: middle; }
+      .label { font: 600 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .nodeText { font: 600 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; text-anchor: middle; dominant-baseline: middle; }
+      .mint { font: 700 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #36536d; }
+      .hold { font: 700 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #6a7280; }
+      .merge { font: 700 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #b56a4f; }
     </style>
   </defs>
 
-  <rect class="bg" x="0" y="0" width="960" height="296" />
-  <text class="title center" x="480" y="34">the complete-set oracle is one scalar comparison</text>
-  <text class="hint center" x="480" y="56">compare collateral against the sum of all outcome prices</text>
+  <rect class="bg" x="0" y="0" width="960" height="248" />
 
-  <!-- main balance -->
-  <polygon points="475,144 485,144 495,162 465,162" fill="#2c2c2c" />
-  <line class="beam" x1="290" y1="128" x2="670" y2="128" />
-  <line class="light" x1="330" y1="128" x2="330" y2="152" />
-  <line class="light" x1="630" y1="128" x2="630" y2="152" />
-  <line class="beam" x1="296" y1="152" x2="364" y2="152" />
-  <line class="beam" x1="596" y1="152" x2="664" y2="152" />
+  <text class="title" x="480" y="32" text-anchor="middle">SPLIT / MERGE ORACLE</text>
+  <text class="hint" x="480" y="54" text-anchor="middle">compare sum(outcome prices) against collateral price</text>
 
-  <rect class="block" x="302" y="92" width="56" height="30" rx="4" />
-  <text class="label center" x="330" y="111">v0</text>
-  <text class="hint center" x="330" y="176">collateral price</text>
+  <line class="beam" x1="350" y1="102" x2="610" y2="102" />
+  <polygon points="480,106 494,128 466,128" fill="#2c2c2c" />
 
-  <rect class="block" x="608" y="78" width="44" height="18" rx="3" />
-  <rect class="block" x="608" y="100" width="44" height="18" rx="3" />
-  <rect class="block" x="608" y="122" width="44" height="18" rx="3" />
-  <rect class="block" x="608" y="144" width="44" height="18" rx="3" />
-  <rect class="block" x="608" y="166" width="44" height="18" rx="3" />
-  <text class="hint center" x="630" y="206">sum of outcome prices</text>
-  <text class="label center" x="630" y="224">v1 + v2 + ... + vN</text>
-  <text class="label center" x="480" y="190">compare  Σ outcomes   vs   collateral</text>
+  <line class="light" x1="392" y1="102" x2="392" y2="128" />
+  <rect class="block" x="372" y="68" width="40" height="28" rx="4" />
+  <text class="nodeText" x="392" y="82">C</text>
+  <text class="hint" x="392" y="144" text-anchor="middle">collateral</text>
 
-  <!-- mini states -->
-  <text class="hint center" x="200" y="246">Σ outcomes &gt; collateral</text>
-  <text class="hint center" x="480" y="246">Σ outcomes = collateral</text>
-  <text class="hint center" x="760" y="246">Σ outcomes &lt; collateral</text>
+  <line class="light" x1="568" y1="102" x2="568" y2="132" />
+  <rect class="block" x="550" y="58" width="36" height="14" rx="2" />
+  <rect class="block" x="550" y="76" width="36" height="14" rx="2" />
+  <rect class="block" x="550" y="94" width="36" height="14" rx="2" />
+  <text class="hint" x="568" y="144" text-anchor="middle">sum outcomes</text>
 
-  <!-- mint -->
-  <polygon points="195,260 203,260 211,274 187,274" fill="#2c2c2c" />
-  <line class="beam" x1="122" y1="240" x2="278" y2="268" />
-  <line class="light" x1="145" y1="244" x2="145" y2="262" />
-  <line class="light" x1="255" y1="264" x2="255" y2="282" />
-  <line class="beam" x1="121" y1="262" x2="169" y2="262" />
-  <line class="beam" x1="231" y1="282" x2="279" y2="282" />
-  <rect class="block" x="132" y="222" width="26" height="16" rx="3" />
-  <rect class="blue" x="243" y="238" width="24" height="12" rx="2" />
-  <rect class="blue" x="243" y="253" width="24" height="12" rx="2" />
-  <rect class="blue" x="243" y="268" width="24" height="12" rx="2" />
-  <text class="actionBlue center" x="200" y="286">MINT</text>
+  <text class="label" x="480" y="170" text-anchor="middle">gap = Σ outcomes - collateral</text>
 
-  <!-- no-op -->
-  <polygon points="475,260 483,260 491,274 467,274" fill="#2c2c2c" />
-  <line class="beam" x1="402" y1="254" x2="558" y2="254" />
-  <line class="light" x1="425" y1="254" x2="425" y2="272" />
-  <line class="light" x1="535" y1="254" x2="535" y2="272" />
-  <line class="beam" x1="401" y1="272" x2="449" y2="272" />
-  <line class="beam" x1="511" y1="272" x2="559" y2="272" />
-  <rect class="block" x="412" y="236" width="26" height="16" rx="3" />
-  <rect class="block" x="523" y="230" width="24" height="12" rx="2" />
-  <rect class="block" x="523" y="245" width="24" height="12" rx="2" />
-  <rect class="block" x="523" y="260" width="24" height="12" rx="2" />
-  <text class="actionGray center" x="480" y="286">NO-OP</text>
+  <text class="hint" x="200" y="198" text-anchor="middle">gap &gt; 0</text>
+  <line class="beam" x1="170" y1="210" x2="230" y2="210" />
+  <rect class="blueFill" x="182" y="186" width="14" height="8" rx="1" />
+  <rect class="blueFill" x="182" y="196" width="14" height="8" rx="1" />
+  <rect class="blueFill" x="182" y="206" width="14" height="8" rx="1" />
+  <rect class="block" x="205" y="198" width="14" height="10" rx="1" />
+  <text class="mint" x="200" y="236" text-anchor="middle">MINT</text>
 
-  <!-- merge -->
-  <polygon points="755,260 763,260 771,274 747,274" fill="#2c2c2c" />
-  <line class="beam" x1="682" y1="268" x2="838" y2="240" />
-  <line class="light" x1="705" y1="264" x2="705" y2="282" />
-  <line class="light" x1="815" y1="244" x2="815" y2="262" />
-  <line class="beam" x1="681" y1="282" x2="729" y2="282" />
-  <line class="beam" x1="791" y1="262" x2="839" y2="262" />
-  <rect class="warm" x="692" y="238" width="24" height="12" rx="2" />
-  <rect class="warm" x="692" y="253" width="24" height="12" rx="2" />
-  <rect class="warm" x="692" y="268" width="24" height="12" rx="2" />
-  <rect class="block" x="802" y="222" width="26" height="16" rx="3" />
-  <text class="actionWarm center" x="760" y="286">MERGE</text>
+  <text class="hint" x="480" y="198" text-anchor="middle">gap = 0</text>
+  <line class="beam" x1="450" y1="210" x2="510" y2="210" />
+  <rect class="block" x="462" y="198" width="14" height="10" rx="1" />
+  <rect class="block" x="485" y="198" width="14" height="10" rx="1" />
+  <text class="hold" x="480" y="236" text-anchor="middle">HOLD</text>
+
+  <text class="hint" x="760" y="198" text-anchor="middle">gap &lt; 0</text>
+  <line class="beam" x1="730" y1="210" x2="790" y2="210" />
+  <rect class="block" x="742" y="198" width="14" height="10" rx="1" />
+  <rect class="warmFill" x="765" y="186" width="14" height="8" rx="1" />
+  <rect class="warmFill" x="765" y="196" width="14" height="8" rx="1" />
+  <rect class="warmFill" x="765" y="206" width="14" height="8" rx="1" />
+  <text class="merge" x="760" y="236" text-anchor="middle">MERGE</text>
 </svg>

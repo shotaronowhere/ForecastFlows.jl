@@ -42,8 +42,6 @@ That is already the whole story in miniature.
 
 If the parts are worth more than the whole, mint and sell the extras. If the whole is worth more than the parts, buy the parts and merge them. The solver's job is to discover those structural trades automatically, alongside the ordinary AMM trades.
 
-![Synthetic YES route](assets/synthetic_yes_route.svg)
-
 *The structural route is not a strange corner case. It is the basic prediction-market trade a good router needs to see.*
 
 ## The routing problem, from first principles
@@ -130,8 +128,6 @@ Each AMM only needs to answer a local arbitrage question against its own prices.
 
 This is one of those ideas that feels almost too simple after you see it. The global route emerges from local profit maximization under the right shadow prices.
 
-![Price discovery coordinates venues](assets/price_discovery_router.svg)
-
 *The router does not guess routes directly. It proposes internal prices, asks each venue for its best local move, and reconciles the answers into one global route.*
 
 ## The split/merge oracle is almost embarrassingly simple
@@ -159,8 +155,6 @@ Then:
 - if the gap is near zero, do nothing structural
 
 That is not a heuristic. It is the exact economic test the complete-set venue should be performing.
-
-![Balance-beam view of the split or merge oracle](assets/oracle_balance.svg)
 
 *At the structural venue, the whole decision is: are the outcome prices heavier than the collateral price, lighter, or balanced?*
 
