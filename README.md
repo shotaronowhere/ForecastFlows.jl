@@ -111,7 +111,8 @@ responsibilities.
 
 ## v1 support matrix
 
-- Julia `1.10`
+- Julia compat floor: `1.10`
+- CI-tested Julia versions: `1.10`, `1.12`
 - Linux `x64`
 - macOS `x64`
 - supported interfaces: Julia facade and JSON worker only
@@ -150,6 +151,10 @@ See `CHANGELOG.md` for the v1.0.0 release notes. The important scope boundary is
 - `ForecastFlows` v1 is a dependency-grade solver release, not a full trading engine
 - Rust or another driver still owns supervision, timeouts, gas, tx building, and chain I/O
 - `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not benchmark truth
+
+The intended production boundary is the solver and worker contract. Live
+rebalancing still depends on the external driver layer that owns execution,
+timeouts, reserve freshness, gas, simulation, and kill switches.
 
 ## Run the benchmark
 
@@ -201,6 +206,9 @@ julia --project=docs docs/make.jl
 - `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not the
   Deep-Trading benchmark comparator.
 - The Deep-Trading benchmark sweep is opt-in, not a default CI gate.
+- Driver-side production safeguards such as tx simulation, reserve freshness,
+  block-level gas budgeting, monitoring, and automated shutdown logic are out
+  of scope for this package.
 
 ## Optional sysimage
 

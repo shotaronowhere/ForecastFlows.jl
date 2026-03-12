@@ -718,7 +718,7 @@ function solve_prediction_market_low_level(problem::PredictionMarketProblem; mod
     end
 
     if mode == :mixed_enabled
-        bound = isnothing(split_bound) ? (isnothing(problem.split_bound) ? problem.initial_cash + sum(problem.initial_holdings) : problem.split_bound) : split_bound
+        bound = isnothing(split_bound) ? (isnothing(problem.split_bound) ? ForecastFlows._default_split_bound(problem) : problem.split_bound) : split_bound
         push!(edges, SplitMergeEdge(collect(1:(n_outcomes + 1)), bound))
     end
 
@@ -1288,6 +1288,24 @@ end
         @test pruned.kept_edges == BitVector([true, true, false])
         @test all(norm(x) ≤ 1e-8 for x in gas_pruned.xs)
         @test norm(gas_pruned.y) ≤ 1e-8
+
+        tiny_zero_face = Solver(
+            flow_objective=NonpositiveQuadratic([5e-5, 1e-4, 1e-4]),
+            edges=Edge[SplitMergeEdge([1, 2, 3], 1.0)],
+            n=3,
+        )
+        solve_with_fixed_gas!(
+            tiny_zero_face,
+            FixedGasModel([0.0]);
+            method=:bfgs_exact,
+            pgtol=1e-8,
+            max_iter=5_000,
+            max_fun=10_000,
+        )
+        @test all(iszero, tiny_zero_face.xs[1])
+        @test all(iszero, tiny_zero_face.y)
+        @test !tiny_zero_face.certificate.passed
+        @test occursin("target residual", tiny_zero_face.certificate.message)
     end
 
     @testset "large smoke" begin
@@ -1646,6 +1664,28 @@ end
             parsed = JSON3.read(encoded)
             @test isnothing(parsed.certificate.primal_value)
             @test isnothing(parsed.certificate.duality_gap)
+
+            zero_balance_problem = PredictionMarketProblem(
+                [0.55, 0.45],
+                0.0,
+                [0.0, 0.0],
+                [
+                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                ],
+            )
+            zero_balance_result = solve_prediction_market(
+                zero_balance_problem;
+                mode=:mixed_enabled,
+                pgtol=1e-8,
+                max_iter=5_000,
+                max_fun=10_000,
+            )
+            @test zero_balance_result.status == "certified"
+            @test zero_balance_result.split_merge.mint == 0.0
+            @test zero_balance_result.split_merge.merge == 0.0
+            @test maximum(abs, vcat([zero_balance_result.final_cash], zero_balance_result.final_holdings)) ≤ 5e-6
+            @test abs(zero_balance_result.final_ev) ≤ 1e-6
         end
 
         @testset "route extraction" begin

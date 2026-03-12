@@ -472,7 +472,7 @@ function _prediction_market_objective(problem::PredictionMarketProblem{T}) where
 end
 
 function _default_split_bound(problem::PredictionMarketProblem{T}) where T
-    return problem.initial_cash + sum(problem.initial_holdings)
+    return max(problem.initial_cash + sum(problem.initial_holdings), eps(T))
 end
 
 function _split_flow_amount(x::AbstractVector{T}) where T

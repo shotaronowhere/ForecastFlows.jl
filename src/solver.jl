@@ -412,6 +412,13 @@ function _select_method(s::Solver, method::Symbol)
     throw(ArgumentError("unknown solve method: $method"))
 end
 
+function _solve_certificate_tolerances(::Type{T}, pgtol::Real) where T
+    gap_tol = max(convert(T, 500) * sqrt(eps(T)), convert(T, 500) * convert(T, pgtol))
+    target_tol = max(convert(T, 100) * sqrt(eps(T)), convert(T, 500) * convert(T, pgtol))
+    bound_tol = max(convert(T, 100) * sqrt(eps(T)), convert(T, 100) * convert(T, pgtol))
+    return gap_tol, target_tol, bound_tol
+end
+
 function _lbfgsb_bounds(s::Solver{T}, nis::Vector{Int}) where T
     len_μ = s.Vis_zero ? s.n : s.n + sum(nis)
     bounds = zeros(T, 3, len_μ)
@@ -726,9 +733,7 @@ function solve!(
 ) where T
     chosen_method = _select_method(s, method)
     has_nonsmooth_edges = any(is_nonsmooth, s.edges)
-    gap_tol = max(convert(T, 500) * sqrt(eps(T)), convert(T, 500) * convert(T, pgtol))
-    target_tol = max(convert(T, 100) * sqrt(eps(T)), convert(T, 500) * convert(T, pgtol))
-    bound_tol = max(convert(T, 100) * sqrt(eps(T)), convert(T, 100) * convert(T, pgtol))
+    gap_tol, target_tol, bound_tol = _solve_certificate_tolerances(T, pgtol)
 
     s.certificate = nothing
     total_time = 0.0
@@ -830,6 +835,26 @@ function solve!(
     return total_time
 end
 
+function _finalize_gas_pruning_state!(
+    s::Solver{T},
+    subsolver::Solver{T},
+    active_inds::Vector{Int},
+    solve_kwargs::NamedTuple;
+    atol::T,
+) where T
+    copy_solver_state!(s, subsolver, active_inds)
+    cleanup_near_zero_flows!(s; atol=atol)
+
+    certify = hasproperty(solve_kwargs, :certify) ? getproperty(solve_kwargs, :certify) : true
+    if certify
+        pgtol = hasproperty(solve_kwargs, :pgtol) ? getproperty(solve_kwargs, :pgtol) : 1e-5
+        gap_tol, target_tol, bound_tol = _solve_certificate_tolerances(T, pgtol)
+        certify_solution(s; gap_tol=gap_tol, target_tol=target_tol, bound_tol=bound_tol)
+    end
+
+    return nothing
+end
+
 function _subset_solver(s::Solver, active_inds::Vector{Int})
     edge_objectives = isnothing(s.edge_objectives) ? nothing : s.edge_objectives[active_inds]
     return Solver(
@@ -909,6 +934,7 @@ function solve_with_fixed_gas!(
 ) where T
     length(gas_model.action_costs) == s.m || throw(ArgumentError("gas model must have one cost per edge"))
 
+    solve_kw_nt = (; solve_kwargs...,)
     active = trues(s.m)
     edge_values = zeros(T, s.m)
     ν_seed = nothing
@@ -919,7 +945,7 @@ function solve_with_fixed_gas!(
         rounds = round
         active_inds = findall(active)
         subsolver = _subset_solver(s, active_inds)
-        total_time += solve!(subsolver; ν0=ν_seed, throw_on_fail=false, solve_kwargs...)
+        total_time += solve!(subsolver; ν0=ν_seed, throw_on_fail=false, solve_kw_nt...)
 
         if isnothing(subsolver.certificate) || !subsolver.certificate.passed
             copy_solver_state!(s, subsolver, active_inds)
@@ -939,8 +965,7 @@ function solve_with_fixed_gas!(
         end
 
         if isempty(candidate_edges)
-            copy_solver_state!(s, subsolver, active_inds)
-            cleanup_near_zero_flows!(s; atol=atol)
+            _finalize_gas_pruning_state!(s, subsolver, active_inds, solve_kw_nt; atol=atol)
             return GasPruningResult(active, edge_values, round, total_time)
         end
 
@@ -955,7 +980,7 @@ function solve_with_fixed_gas!(
             candidate_edges,
             gas_model,
             subsolver.ν,
-            (; solve_kwargs...,),
+            solve_kw_nt,
             atol,
         )
 
@@ -972,8 +997,7 @@ function solve_with_fixed_gas!(
         end
 
         if best_edge == 0
-            copy_solver_state!(s, subsolver, active_inds)
-            cleanup_near_zero_flows!(s; atol=atol)
+            _finalize_gas_pruning_state!(s, subsolver, active_inds, solve_kw_nt; atol=atol)
             return GasPruningResult(active, edge_values, round, total_time)
         end
 
@@ -983,9 +1007,8 @@ function solve_with_fixed_gas!(
 
     active_inds = findall(active)
     subsolver = _subset_solver(s, active_inds)
-    total_time += solve!(subsolver; ν0=ν_seed, throw_on_fail=false, solve_kwargs...)
-    copy_solver_state!(s, subsolver, active_inds)
-    cleanup_near_zero_flows!(s; atol=atol)
+    total_time += solve!(subsolver; ν0=ν_seed, throw_on_fail=false, solve_kw_nt...)
+    _finalize_gas_pruning_state!(s, subsolver, active_inds, solve_kw_nt; atol=atol)
 
     return GasPruningResult(active, edge_values, rounds, total_time)
 end

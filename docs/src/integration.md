@@ -26,9 +26,14 @@ ForecastFlows should own:
 - route recovery
 - certification metadata
 
+The driver still owns production safety policy around timeouts, reserve
+freshness, gas budgeting, tx simulation, retries, circuit breakers, and
+operator observability.
+
 ## v1 support matrix
 
-- Julia `1.10`
+- Julia compat floor: `1.10`
+- CI-tested Julia versions: `1.10`, `1.12`
 - Linux `x64`
 - macOS `x64`
 - supported dependency interfaces: Julia facade and JSON worker

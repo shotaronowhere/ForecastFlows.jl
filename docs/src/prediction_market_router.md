@@ -50,6 +50,11 @@ doublings, `solve_prediction_market` throws instead of quietly returning a
 clipped route. Pass `throw_on_fail=false` only when you explicitly want to
 inspect an uncertified result.
 
+If `split_bound` is omitted, mixed solves seed it from
+`initial_cash + sum(initial_holdings)` with a tiny positive floor. That keeps a
+zero-balance portfolio on the zero-trade route instead of tripping the
+near-active split/merge guard at a literal bound of `0`.
+
 The lower-level `Solver` / `SplitMergeEdge` / `EndowmentLinear` interface
 remains available and is still the right escape hatch for custom routing
 experiments. The new facade is the stable package boundary for the standard
@@ -61,6 +66,12 @@ protocol, not embedded Julia or FFI.
 The benchmark-only single-tick edge and replay engine live in tests on purpose.
 They are comparison machinery for the vendored Deep-Trading fixtures, not
 public package API.
+
+For `v1`, the support policy is:
+
+- Julia compat floor: `1.10`
+- CI-tested Julia versions: `1.10`, `1.12`
+- supported production boundary: the Julia facade and the JSON worker
 
 ## Worker integration
 
@@ -131,6 +142,9 @@ julia --project bin/release-check.jl
 - Split/merge recovery is specialized to a single `SplitMergeEdge`.
 - `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not the
   Deep-Trading benchmark comparator.
+- `solve_with_fixed_gas!` cleans near-zero flows before returning and then
+  re-certifies, so inspect `s.certificate` on the mutated solver state rather
+  than caching an earlier certificate snapshot.
 - The Deep-Trading benchmark sweep is opt-in and is not a default CI gate.
 - v1 scope is solver dependency use only; tx construction and chain interaction
   stay outside this package.
