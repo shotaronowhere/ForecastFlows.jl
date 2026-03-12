@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 340" width="980" height="340" role="img" aria-labelledby="title desc">
+  <title id="title">Standard DEX topology versus prediction market topology</title>
+  <desc id="desc">Two side-by-side diagrams. Left: collateral connected to five outcome nodes by pairwise AMM edges. Right: the same edges plus a shaded dashed hyperedge linking collateral and all outcomes, labeled split or merge.</desc>
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .node { fill: none; stroke: #2c2c2c; stroke-width: 2; }
+      .edge { fill: none; stroke: #8f96a3; stroke-width: 1.8; stroke-linecap: round; }
+      .blob { fill: #d6e4f0; opacity: 0.32; stroke: #587ea3; stroke-width: 2; }
+      .title { font: 600 18px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .label { font: 500 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .hint { font: 500 12px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #6a7280; }
+      .nodeText { font: 600 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; text-anchor: middle; dominant-baseline: middle; }
+      .hyperText { font: 600 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #36536d; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="980" height="340" />
+
+  <text class="title" x="220" y="36" text-anchor="middle">STANDARD DEX</text>
+  <text class="title" x="740" y="36" text-anchor="middle">PREDICTION MARKET</text>
+
+  <text class="hint" x="220" y="62" text-anchor="middle">pairwise AMM edges only</text>
+  <text class="hint" x="740" y="62" text-anchor="middle">pairwise AMMs + one structural hyperedge</text>
+
+  <!-- left -->
+  <circle class="node" cx="130" cy="170" r="24" />
+  <text class="nodeText" x="130" y="170">C</text>
+
+  <circle class="node" cx="310" cy="80" r="20" />
+  <circle class="node" cx="330" cy="125" r="20" />
+  <circle class="node" cx="338" cy="170" r="20" />
+  <circle class="node" cx="330" cy="215" r="20" />
+  <circle class="node" cx="310" cy="260" r="20" />
+  <text class="nodeText" x="310" y="80">O1</text>
+  <text class="nodeText" x="330" y="125">O2</text>
+  <text class="nodeText" x="338" y="170">O3</text>
+  <text class="nodeText" x="330" y="215">O4</text>
+  <text class="nodeText" x="310" y="260">O5</text>
+
+  <line class="edge" x1="152" y1="160" x2="291" y2="90" />
+  <line class="edge" x1="154" y1="165" x2="309" y2="130" />
+  <line class="edge" x1="154" y1="170" x2="316" y2="170" />
+  <line class="edge" x1="154" y1="175" x2="309" y2="210" />
+  <line class="edge" x1="152" y1="180" x2="291" y2="250" />
+  <text class="hint" x="230" y="148" text-anchor="middle">AMM</text>
+
+  <!-- right -->
+  <circle class="node" cx="560" cy="170" r="24" />
+  <text class="nodeText" x="560" y="170">C</text>
+
+  <circle class="node" cx="770" cy="80" r="20" />
+  <circle class="node" cx="800" cy="125" r="20" />
+  <circle class="node" cx="812" cy="170" r="20" />
+  <circle class="node" cx="800" cy="215" r="20" />
+  <circle class="node" cx="770" cy="260" r="20" />
+  <text class="nodeText" x="770" y="80">O1</text>
+  <text class="nodeText" x="800" y="125">O2</text>
+  <text class="nodeText" x="812" y="170">O3</text>
+  <text class="nodeText" x="800" y="215">O4</text>
+  <text class="nodeText" x="770" y="260">O5</text>
+
+  <polygon class="blob" points="538,148 606,66 690,50 796,74 850,128 846,226 782,284 680,302 590,276 540,222" />
+
+  <line class="edge" x1="582" y1="160" x2="751" y2="90" />
+  <line class="edge" x1="584" y1="165" x2="779" y2="130" />
+  <line class="edge" x1="584" y1="170" x2="790" y2="170" />
+  <line class="edge" x1="584" y1="175" x2="779" y2="210" />
+  <line class="edge" x1="582" y1="180" x2="751" y2="250" />
+  <text class="hint" x="690" y="142" text-anchor="middle">pairwise AMMs still exist</text>
+  <text class="hyperText" x="684" y="182">hyperedge</text>
+  <text class="hyperText" x="684" y="200">split / merge</text>
+</svg>

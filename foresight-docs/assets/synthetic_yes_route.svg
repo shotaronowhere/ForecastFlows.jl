@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 270" width="920" height="270" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic YES route</title>
+  <desc id="desc">A stick figure wants YES. The route mints a complete set from collateral, sells the unwanted NO, and keeps YES. A comparison shows direct YES costs 0.62 while the synthetic route costs 0.55.</desc>
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .note { fill: none; stroke: #2c2c2c; stroke-width: 1.6; rx: 10; }
+      .accent { stroke: #587ea3; stroke-width: 3.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .dash { stroke: #8f96a3; stroke-width: 1.8; fill: none; stroke-dasharray: 5 5; }
+      .thin { stroke: #1f1a17; stroke-width: 2; fill: none; stroke-linecap: round; }
+      .title { font: 600 18px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .label { font: 600 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .small { font: 500 12px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .token { font: 600 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; text-anchor: middle; dominant-baseline: middle; }
+      .good { font: 700 15px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #36536d; }
+      .bad { font: 700 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #8a4a3c; text-decoration: line-through; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#587ea3" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="920" height="270" />
+  <text class="title" x="460" y="34" text-anchor="middle">synthetic YES = split once, dump the hedge leg, keep the target leg</text>
+
+  <circle cx="78" cy="106" r="14" fill="none" stroke="#2c2c2c" stroke-width="2.2" />
+  <line class="thin" x1="78" y1="120" x2="78" y2="156" />
+  <line class="thin" x1="78" y1="132" x2="58" y2="144" />
+  <line class="thin" x1="78" y1="132" x2="98" y2="144" />
+  <line class="thin" x1="78" y1="156" x2="64" y2="181" />
+  <line class="thin" x1="78" y1="156" x2="92" y2="181" />
+  <text class="small" x="78" y="198" text-anchor="middle">want YES</text>
+  <text class="label" x="78" y="82" text-anchor="middle">trader</text>
+
+  <text class="label" x="180" y="103" text-anchor="middle">1.00 C</text>
+  <path class="accent" d="M104 110 C132 110 142 110 164 110" marker-end="url(#arrow)" />
+  <path class="accent" d="M196 110 C220 110 232 110 252 110" marker-end="url(#arrow)" />
+  <text class="small" x="228" y="98" text-anchor="middle">split()</text>
+
+  <circle cx="292" cy="90" r="16" fill="none" stroke="#2c2c2c" stroke-width="2" />
+  <circle cx="292" cy="132" r="16" fill="none" stroke="#2c2c2c" stroke-width="2" />
+  <text class="token" x="292" y="90">YES</text>
+  <text class="token" x="292" y="132">NO</text>
+  <text class="small" x="292" y="160" text-anchor="middle">1 YES + 1 NO</text>
+
+  <path class="accent" d="M308 90 C344 90 366 90 400 90" marker-end="url(#arrow)" />
+  <text class="label" x="456" y="90" text-anchor="middle">keep YES</text>
+  <circle cx="520" cy="90" r="18" fill="none" stroke="#2c2c2c" stroke-width="2" />
+  <text class="token" x="520" y="90">YES</text>
+
+  <path class="dash" d="M308 132 C354 132 382 132 420 132" />
+  <text class="small" x="440" y="132" text-anchor="middle">sell NO into AMM</text>
+  <path class="accent" d="M308 132 C360 132 420 132 480 154" marker-end="url(#arrow)" />
+  <text class="label" x="560" y="162" text-anchor="middle">0.45 C back</text>
+
+  <line class="dash" x1="662" y1="88" x2="662" y2="186" />
+  <text class="small" x="662" y="78" text-anchor="middle">cost comparison</text>
+  <text class="bad" x="700" y="112">direct YES: 0.62 C</text>
+  <text class="good" x="700" y="144">synthetic YES: 0.55 C</text>
+  <text class="small" x="700" y="172">1.00 - 0.45 = 0.55</text>
+</svg>

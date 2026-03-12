@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 280" width="920" height="280" role="img" aria-labelledby="title desc">
+  <title id="title">Price discovery coordinates venues</title>
+  <desc id="desc">A central internal price vector sends signals to three venues: a YES pool, a NO pool, and the split or merge venue. Each venue responds with its best local trade, and the global route emerges when the answers fit together.</desc>
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .center { fill: none; stroke: #2c2c2c; stroke-width: 1.8; stroke-dasharray: 5 5; }
+      .venue { fill: none; stroke: #2c2c2c; stroke-width: 1.8; }
+      .arrow { stroke: #587ea3; stroke-width: 2.8; fill: none; stroke-linecap: round; }
+      .return { stroke: #b56a4f; stroke-width: 2.4; fill: none; stroke-dasharray: 6 6; stroke-linecap: round; }
+      .loop { stroke: #8f96a3; stroke-width: 1.6; fill: none; stroke-dasharray: 4 5; }
+      .title { font: 600 18px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .label { font: 600 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .small { font: 500 12px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+    </style>
+    <marker id="blueArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#587ea3" />
+    </marker>
+    <marker id="redArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b56a4f" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="920" height="280" />
+  <text class="title" x="460" y="30" text-anchor="middle">global route emerges from local answers at one price vector</text>
+
+  <rect class="center" x="375" y="40" width="170" height="42" rx="8" />
+  <text class="label" x="460" y="58" text-anchor="middle">[Pc, P1, ..., PN]</text>
+  <text class="small" x="460" y="74" text-anchor="middle">current internal prices</text>
+
+  <circle class="venue" cx="170" cy="170" r="34" />
+  <text class="label" x="170" y="166" text-anchor="middle">AMM1</text>
+  <text class="small" x="170" y="184" text-anchor="middle">best local trade</text>
+
+  <circle class="venue" cx="360" cy="170" r="34" />
+  <text class="label" x="360" y="166" text-anchor="middle">AMM2</text>
+  <text class="small" x="360" y="184" text-anchor="middle">best local trade</text>
+
+  <text class="label" x="520" y="176" text-anchor="middle">...</text>
+
+  <circle class="venue" cx="650" cy="170" r="34" />
+  <text class="label" x="650" y="166" text-anchor="middle">AMMk</text>
+  <text class="small" x="650" y="184" text-anchor="middle">best local trade</text>
+
+  <rect class="venue" x="736" y="146" width="116" height="48" rx="6" />
+  <text class="label" x="794" y="164" text-anchor="middle">split/merge</text>
+  <text class="small" x="794" y="182" text-anchor="middle">mint | merge | hold</text>
+
+  <path class="arrow" d="M410 83 C330 102 252 122 190 142" marker-end="url(#blueArrow)" />
+  <path class="arrow" d="M438 83 C414 107 394 124 374 138" marker-end="url(#blueArrow)" />
+  <path class="arrow" d="M490 83 C544 104 588 121 626 140" marker-end="url(#blueArrow)" />
+  <path class="arrow" d="M510 83 C634 112 714 126 760 145" marker-end="url(#blueArrow)" />
+
+  <path class="return" d="M170 136 C210 102 282 72 374 61" marker-end="url(#redArrow)" />
+  <path class="return" d="M360 136 C386 106 404 86 433 70" marker-end="url(#redArrow)" />
+  <path class="return" d="M650 136 C612 103 562 78 513 66" marker-end="url(#redArrow)" />
+  <path class="return" d="M736 146 C674 112 606 83 545 66" marker-end="url(#redArrow)" />
+
+  <path class="loop" d="M560 36 C718 40 828 112 832 228 C736 246 564 246 422 232" />
+  <text class="small" x="734" y="238" text-anchor="middle">repeat until consistent</text>
+  <text class="small" x="460" y="252" text-anchor="middle">global route = local venue answers fit together at one price vector</text>
+</svg>
