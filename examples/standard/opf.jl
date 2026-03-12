@@ -28,6 +28,7 @@ the power flow constraints and net flow constraint:
 =#
 
 using ForecastFlows
+import ForecastFlows: Edge, NonpositiveQuadratic, problem, solve!
 using Random, LinearAlgebra, SparseArrays
 using Plots, LogExpFunctions
 
@@ -89,5 +90,4 @@ plt = bar(
     color=:blue,
 )
 bar!(plt, d, label="demand", alpha=0.5, color=:red)
-
 

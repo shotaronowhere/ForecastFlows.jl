@@ -1,0 +1,47 @@
+{
+  "protocol_version": 2,
+  "request_id": "health-fixture",
+  "ok": true,
+  "command": "health",
+  "result": {
+    "status": "ok",
+    "package": "ForecastFlows",
+    "package_version": "2.0.0",
+    "supported_commands": [
+      "health",
+      "solve_prediction_market",
+      "compare_prediction_market_families"
+    ],
+    "supported_modes": [
+      "direct_only",
+      "mixed_enabled"
+    ],
+    "supported_market_types": [
+      "constant_product",
+      "univ3"
+    ],
+    "stable_interfaces": [
+      "prediction_market_facade",
+      "ndjson_protocol"
+    ],
+    "public_interfaces": [
+      "PredictionMarketWorkspace",
+      "solve_prediction_market!",
+      "PREDICTION_MARKET_PROTOCOL_VERSION",
+      "HealthRequest",
+      "SolveRequest",
+      "CompareRequest",
+      "HealthResponse",
+      "SolveResponse",
+      "CompareResponse",
+      "ErrorResponse",
+      "parse_protocol_request",
+      "handle_protocol_request",
+      "render_protocol_response",
+      "handle_protocol_json",
+      "serve_protocol"
+    ],
+    "numeric_units": "decimal collateral and outcome token units",
+    "execution_model": "stateless NDJSON; one request at a time per worker process"
+  }
+}

@@ -12,12 +12,20 @@ function main()
     julia_cmd = Base.julia_cmd()
 
     run_step(
+        "release boundary",
+        `$(julia_cmd) --project=$(REPO_ROOT) $(joinpath(REPO_ROOT, "bin", "release-boundary-check.jl"))`,
+    )
+    run_step(
         "default test suite",
         `$(julia_cmd) --project=$(REPO_ROOT) -e $("using Pkg; Pkg.test()")`,
     )
     run_step(
         "worker smoke",
         `$(julia_cmd) --project=$(REPO_ROOT) $(joinpath(REPO_ROOT, "bin", "worker-smoke.jl"))`,
+    )
+    run_step(
+        "latency smoke",
+        `$(julia_cmd) --project=$(REPO_ROOT) $(joinpath(REPO_ROOT, "bin", "latency-smoke.jl"))`,
     )
     run_step(
         "docs instantiate",

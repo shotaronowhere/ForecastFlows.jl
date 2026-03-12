@@ -2,24 +2,32 @@
 
 For generic convex-flow work, use the root solver API:
 
-- construct a `Solver` with a flow objective and edge list
-- call `solve!`
+- construct a `ForecastFlows.Solver` with a flow objective and edge list
+- call `ForecastFlows.solve!`
 - inspect `s.y`, `s.xs`, and `s.certificate`
 
 For the standard prediction-market router, prefer the dedicated facade:
 
+- `OutcomeSpec`
 - `PredictionMarketProblem`
 - `ConstantProductMarketSpec`
 - `UniV3MarketSpec`
 - `solve_prediction_market`
 - `compare_prediction_market_families`
 
-The lower-level prediction-market pieces remain available when needed:
+The advanced repeated-solve Julia API remains available by qualified access:
 
-- `SplitMergeEdge` for fee-free mint/merge
-- `EndowmentLinear` for portfolio-EV benchmarking
-- `solve_with_fixed_gas!` for rough fixed-charge pruning; the Deep-Trading
-  benchmark sweep uses a separate test-local grouped pricing layer
+- `ForecastFlows.PredictionMarketWorkspace`
+- `ForecastFlows.solve_prediction_market!`
+
+The lower-level prediction-market pieces remain available as qualified names for
+Julia-side research when needed:
+
+- `ForecastFlows.SplitMergeEdge` for fee-free mint/merge
+- `ForecastFlows.EndowmentLinear` for portfolio-EV benchmarking
+
+For external drivers, keep gas pricing, native-token conversion, tx grouping,
+and execution policy outside the package.
 
 For non-Julia drivers, use the JSON worker documented in the
 [Integration Guide](integration.md).

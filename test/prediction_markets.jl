@@ -2,6 +2,7 @@ using JSON3
 using Libdl
 
 const pm_tol = 1e-6
+const facade_solver_options = (; pgtol=1e-8, max_iter=5_000, max_fun=10_000)
 const dt_focus_case_id = "heterogeneous_ninety_eight_outcome_l1_like_case"
 const benchmark_opt_in_env = "FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK"
 const replay_atol = 1e-9
@@ -705,13 +706,14 @@ function split_flow_size(x)
 end
 
 function solve_prediction_market_low_level(problem::PredictionMarketProblem; mode::Symbol=:direct_only, split_bound=nothing, kwargs...)
-    n_outcomes = length(problem.outcome_values)
+    n_outcomes = length(problem.outcomes)
+    outcome_index_by_id = Dict(outcome.outcome_id => i for (i, outcome) in enumerate(problem.outcomes))
     edges = Edge[]
     for spec in problem.markets
         if spec isa ConstantProductMarketSpec
-            push!(edges, ProductTwoCoin([spec.collateral_reserve, spec.outcome_reserve], spec.fee_multiplier, [1, spec.outcome_index + 1]))
+            push!(edges, ProductTwoCoin([spec.collateral_reserve, spec.outcome_reserve], spec.fee_multiplier, [1, outcome_index_by_id[spec.outcome_id] + 1]))
         elseif spec isa UniV3MarketSpec
-            push!(edges, UniV3(spec.current_price, spec.lower_ticks, spec.liquidity, spec.fee_multiplier, [1, spec.outcome_index + 1]))
+            push!(edges, UniV3(spec.current_price, getfield(spec, :lower_ticks), getfield(spec, :liquidity_k), spec.fee_multiplier, [1, outcome_index_by_id[spec.outcome_id] + 1]))
         else
             error("unsupported market spec type $(typeof(spec))")
         end
@@ -723,7 +725,10 @@ function solve_prediction_market_low_level(problem::PredictionMarketProblem; mod
     end
 
     solver = Solver(
-        flow_objective=EndowmentLinear(vcat([1.0], problem.outcome_values), vcat([problem.initial_cash], problem.initial_holdings)),
+        flow_objective=EndowmentLinear(
+            vcat([1.0], [outcome.fair_value for outcome in problem.outcomes]),
+            vcat([problem.collateral_balance], [outcome.initial_holding for outcome in problem.outcomes]),
+        ),
         edges=edges,
         n=n_outcomes + 1,
     )
@@ -1510,107 +1515,213 @@ end
     end
 
     @testset "public prediction-market facade" begin
+        expected_public_interfaces = [
+            "PredictionMarketWorkspace",
+            "solve_prediction_market!",
+            "PREDICTION_MARKET_PROTOCOL_VERSION",
+            "HealthRequest",
+            "SolveRequest",
+            "CompareRequest",
+            "HealthResponse",
+            "SolveResponse",
+            "CompareResponse",
+            "ErrorResponse",
+            "parse_protocol_request",
+            "handle_protocol_request",
+            "render_protocol_response",
+            "handle_protocol_json",
+            "serve_protocol",
+        ]
+
         @testset "input validation" begin
-            @test_throws ArgumentError ConstantProductMarketSpec("", 1, 100.0, 100.0, 1.0)
-            @test_throws ArgumentError ConstantProductMarketSpec("m1", 0, 100.0, 100.0, 1.0)
-            @test_throws ArgumentError UniV3MarketSpec("u1", 1, 1.0, [0.5, 1.0], [100.0, 100.0], 0.997)
-            @test_throws ArgumentError PredictionMarketProblem(
-                [0.5, 0.5],
-                -1.0,
-                [0.0, 0.0],
-                [
-                    ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 100.0, 100.0, 1.0),
-                ],
-            )
-            @test_throws ArgumentError PredictionMarketProblem(
-                [0.5, 0.5],
-                1.0,
-                [0.0],
-                [
-                    ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 100.0, 100.0, 1.0),
-                ],
-            )
-            @test_throws ArgumentError PredictionMarketProblem(
+            @test_throws ArgumentError OutcomeSpec("", 0.5, 0.0)
+            @test_throws ArgumentError ConstantProductMarketSpec("", "YES", 100.0, 100.0, 1.0)
+            @test_throws ArgumentError ConstantProductMarketSpec("m1", "", 100.0, 100.0, 1.0)
+            @test_throws MethodError ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0)
+            @test_throws MethodError UniV3MarketSpec("u1", "YES", 1.0, [0.5, 1.0], [100.0, 100.0], 0.997)
+            @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.5, [UniV3LiquidityBand(1.0, 0.0)], 0.997)
+            @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.75, [UniV3LiquidityBand(1.0, 0.0), UniV3LiquidityBand(0.5, 10.0)], 0.997)
+            @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.75, [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0), UniV3LiquidityBand(0.25, 0.0)], 0.997)
+            @test_throws MethodError PredictionMarketProblem(
                 [0.5, 0.5],
                 1.0,
                 [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 1, 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m1", "YES", 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 100.0, 100.0, 1.0),
                 ],
+            )
+            @test_throws MethodError solve_prediction_market(
+                PredictionMarketProblem(
+                    [OutcomeSpec("YES", 0.5, 0.0)],
+                    1.0,
+                    [ConstantProductMarketSpec("m1", "YES", 100.0, 100.0, 1.0)],
+                );
+                pgtol=1e-8,
             )
             @test_throws ArgumentError PredictionMarketProblem(
-                [0.5, 0.5],
-                1.0,
-                [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 100.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m1", 2, 100.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.5, 0.0),
+                    OutcomeSpec("YES", 0.5, 0.0),
+                ],
+                1.0,
+                [ConstantProductMarketSpec("m1", "YES", 100.0, 100.0, 1.0)],
+            )
+            @test_throws ArgumentError PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.5, 0.0),
+                    OutcomeSpec("NO", 0.5, 0.0),
+                ],
+                1.0,
+                [ConstantProductMarketSpec("m1", "MAYBE", 100.0, 100.0, 1.0)],
+            )
+            @test_throws ArgumentError PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.5, 0.0),
+                    OutcomeSpec("NO", 0.5, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m1", "NO", 100.0, 100.0, 1.0),
                 ],
             )
+
+            zero_market_problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.6, 0.0),
+                    OutcomeSpec("NO", 0.4, 0.0),
+                ],
+                1.0,
+                Any[],
+            )
+            one_market_problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.6, 0.0),
+                    OutcomeSpec("NO", 0.4, 0.0),
+                ],
+                1.0,
+                [ConstantProductMarketSpec("m_yes", "YES", 50.0, 100.0, 1.0)],
+            )
+            multi_pool_problem = PredictionMarketProblem(
+                [OutcomeSpec("YES", 0.25, 200.0)],
+                0.0,
+                [
+                    ConstantProductMarketSpec("m_yes_a", "YES", 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m_yes_b", "YES", 60.0, 30.0, 1.0),
+                ],
+            )
+            @test isempty(zero_market_problem.markets)
+            @test length(one_market_problem.markets) == 1
+            @test length(multi_pool_problem.markets) == 2
+            @test all(spec -> spec.outcome_id == "YES", multi_pool_problem.markets)
+        end
+
+        @testset "outcome_id and JSON roundtrip" begin
+            problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES_A", 0.55, 0.0),
+                    OutcomeSpec("NO_B", 0.45, 1.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m_yes", "YES_A", 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m_no", "NO_B", 70.0, 100.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+
+            encoded_problem = JSON3.read(JSON3.write(problem))
+            @test String(encoded_problem.outcomes[1].outcome_id) == "YES_A"
+            @test String(encoded_problem.markets[2].outcome_id) == "NO_B"
+            @test hasproperty(encoded_problem, :collateral_balance)
+            @test !hasproperty(encoded_problem, :initial_cash)
+            @test !hasproperty(encoded_problem.markets[1], :outcome_index)
+
+            result = solve_prediction_market(problem; mode=:direct_only, solver_options=facade_solver_options)
+            @test result.outcome_ids == ["YES_A", "NO_B"]
+            @test result.trades[1].outcome_id == "YES_A"
+            @test !hasproperty(result, :initial_cash)
+            @test !hasproperty(result, :final_cash)
+
+            encoded_result = JSON3.read(JSON3.write(result))
+            @test String.(collect(encoded_result.outcome_ids)) == ["YES_A", "NO_B"]
+            @test String(encoded_result.trades[1].outcome_id) == "YES_A"
+            @test hasproperty(encoded_result, :initial_collateral)
+            @test hasproperty(encoded_result, :final_collateral)
+            @test !hasproperty(encoded_result.trades[1], :outcome_index)
+            @test !hasproperty(encoded_result, :initial_cash)
+            @test !hasproperty(encoded_result, :final_cash)
         end
 
         @testset "facade parity" begin
             direct_problem = PredictionMarketProblem(
-                [0.25, 0.75],
-                0.0,
-                [1.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 200.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 100.0, 200.0, 1.0),
+                    OutcomeSpec("YES", 0.25, 1.0),
+                    OutcomeSpec("NO", 0.75, 0.0),
+                ],
+                0.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 200.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 100.0, 200.0, 1.0),
                 ],
             )
-            direct_result = solve_prediction_market(direct_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+            direct_result = solve_prediction_market(direct_problem; mode=:direct_only, solver_options=facade_solver_options)
             direct_solver = solve_prediction_market_low_level(direct_problem; mode=:direct_only)
+            direct_holdings0 = [outcome.initial_holding for outcome in direct_problem.outcomes]
+            direct_values = [outcome.fair_value for outcome in direct_problem.outcomes]
 
             @test direct_result.status == "certified"
-            @test direct_result.final_cash ≈ direct_problem.initial_cash + direct_solver.y[1] atol=1e-8
-            @test direct_result.final_holdings ≈ direct_problem.initial_holdings .+ direct_solver.y[2:end] atol=1e-8
-            @test direct_result.final_ev ≈ direct_problem.initial_cash + dot(direct_problem.outcome_values, direct_problem.initial_holdings) + primal_objective(direct_solver) atol=1e-8
+            @test direct_result.final_collateral ≈ direct_problem.collateral_balance + direct_solver.y[1] atol=1e-8
+            @test direct_result.final_holdings ≈ direct_holdings0 .+ direct_solver.y[2:end] atol=1e-8
+            @test direct_result.final_ev ≈ direct_problem.collateral_balance + dot(direct_values, direct_holdings0) + primal_objective(direct_solver) atol=1e-8
 
             mixed_problem = PredictionMarketProblem(
-                [0.55, 0.45],
-                1.0,
-                [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.55, 0.0),
+                    OutcomeSpec("NO", 0.45, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
                 ];
                 split_bound=5.0,
             )
             mixed_result = solve_prediction_market(
                 mixed_problem;
                 mode=:mixed_enabled,
-                pgtol=1e-8,
-                max_iter=5_000,
-                max_fun=10_000,
                 max_doublings=0,
                 throw_on_fail=false,
+                solver_options=facade_solver_options,
             )
             mixed_solver = solve_prediction_market_low_level(mixed_problem; mode=:mixed_enabled, split_bound=5.0)
+            mixed_holdings0 = [outcome.initial_holding for outcome in mixed_problem.outcomes]
+            mixed_values = [outcome.fair_value for outcome in mixed_problem.outcomes]
 
             @test mixed_result.status == "uncertified"
-            @test mixed_result.final_cash ≈ mixed_problem.initial_cash + mixed_solver.y[1] atol=1e-8
-            @test mixed_result.final_holdings ≈ mixed_problem.initial_holdings .+ mixed_solver.y[2:end] atol=1e-8
+            @test mixed_result.final_collateral ≈ mixed_problem.collateral_balance + mixed_solver.y[1] atol=1e-8
+            @test mixed_result.final_holdings ≈ mixed_holdings0 .+ mixed_solver.y[2:end] atol=1e-8
+            @test mixed_result.final_ev ≈ mixed_problem.collateral_balance + dot(mixed_values, mixed_holdings0) + primal_objective(mixed_solver) atol=1e-8
             @test mixed_result.split_merge.mint ≈ 5.0 atol=1e-8
             @test mixed_result.split_merge.merge ≈ 0.0 atol=1e-8
         end
 
         @testset "release guardrails" begin
             clipped_problem = PredictionMarketProblem(
-                [0.55, 0.45],
-                1.0,
-                [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.55, 0.0),
+                    OutcomeSpec("NO", 0.45, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
                 ];
                 split_bound=5.0,
             )
             let err = try
-                    solve_prediction_market(clipped_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+                    solve_prediction_market(clipped_problem; mode=:mixed_enabled, max_doublings=0, solver_options=facade_solver_options)
                     nothing
                 catch err
                     err
@@ -1622,27 +1733,27 @@ end
             clipped_result = solve_prediction_market(
                 clipped_problem;
                 mode=:mixed_enabled,
-                pgtol=1e-8,
-                max_iter=5_000,
-                max_fun=10_000,
                 max_doublings=0,
                 throw_on_fail=false,
+                solver_options=facade_solver_options,
             )
             @test clipped_result.status == "uncertified"
             @test occursin("split/merge bound remained near-active", clipped_result.certificate.message)
             @test clipped_result.split_merge.mint ≈ 5.0 atol=1e-8
 
             default_mixed_problem = PredictionMarketProblem(
-                [0.55, 0.45],
-                1.0,
-                [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.55, 0.0),
+                    OutcomeSpec("NO", 0.45, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
                 ],
             )
             let err = try
-                    solve_prediction_market(default_mixed_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+                    solve_prediction_market(default_mixed_problem; mode=:mixed_enabled, solver_options=facade_solver_options)
                     nothing
                 catch err
                     err
@@ -1654,10 +1765,8 @@ end
             unsafe_result = solve_prediction_market(
                 default_mixed_problem;
                 mode=:mixed_enabled,
-                pgtol=1e-8,
-                max_iter=5_000,
-                max_fun=10_000,
                 throw_on_fail=false,
+                solver_options=facade_solver_options,
             )
             @test unsafe_result.status == "uncertified"
             encoded = JSON3.write(unsafe_result)
@@ -1666,163 +1775,434 @@ end
             @test isnothing(parsed.certificate.duality_gap)
 
             zero_balance_problem = PredictionMarketProblem(
-                [0.55, 0.45],
-                0.0,
-                [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.55, 0.0),
+                    OutcomeSpec("NO", 0.45, 0.0),
+                ],
+                0.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
                 ],
             )
             zero_balance_result = solve_prediction_market(
                 zero_balance_problem;
                 mode=:mixed_enabled,
-                pgtol=1e-8,
-                max_iter=5_000,
-                max_fun=10_000,
+                solver_options=facade_solver_options,
             )
             @test zero_balance_result.status == "certified"
             @test zero_balance_result.split_merge.mint == 0.0
             @test zero_balance_result.split_merge.merge == 0.0
-            @test maximum(abs, vcat([zero_balance_result.final_cash], zero_balance_result.final_holdings)) ≤ 5e-6
+            @test maximum(abs, vcat([zero_balance_result.final_collateral], zero_balance_result.final_holdings)) ≤ 5e-6
             @test abs(zero_balance_result.final_ev) ≤ 1e-6
+        end
+
+        @testset "zero-market direct-only" begin
+            zero_market_problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.55, 0.0),
+                    OutcomeSpec("NO", 0.45, 0.0),
+                ],
+                1.0,
+                Any[];
+                split_bound=5.0,
+            )
+            stateless_result = solve_prediction_market(
+                zero_market_problem;
+                mode=:direct_only,
+                solver_options=facade_solver_options,
+            )
+            @test stateless_result.status == "certified"
+            @test isempty(stateless_result.trades)
+            @test stateless_result.split_merge.mint == 0.0
+            @test stateless_result.split_merge.merge == 0.0
+            @test stateless_result.initial_collateral == 1.0
+            @test stateless_result.final_collateral == 1.0
+            @test stateless_result.initial_holdings == [0.0, 0.0]
+            @test stateless_result.final_holdings == [0.0, 0.0]
+            @test stateless_result.initial_ev == 1.0
+            @test stateless_result.final_ev == 1.0
+            @test stateless_result.certificate.passed
+            @test stateless_result.certificate.primal_value == 0.0
+            @test stateless_result.certificate.duality_gap == 0.0
+
+            encoded_problem = JSON3.read(JSON3.write(zero_market_problem))
+            @test isempty(encoded_problem.markets)
+
+            encoded_result = JSON3.read(JSON3.write(stateless_result))
+            @test isempty(encoded_result.trades)
+            @test encoded_result.initial_collateral == 1.0
+            @test encoded_result.final_collateral == 1.0
+
+            workspace = ForecastFlows.PredictionMarketWorkspace(zero_market_problem)
+            workspace_result = ForecastFlows.solve_prediction_market!(
+                workspace,
+                zero_market_problem;
+                mode=:direct_only,
+                solver_options=facade_solver_options,
+            )
+            @test workspace_result.final_ev == stateless_result.final_ev
+            @test workspace_result.final_holdings == stateless_result.final_holdings
+            @test isempty(workspace_result.trades)
+
+            uncertified_result = solve_prediction_market(
+                zero_market_problem;
+                mode=:direct_only,
+                certify=false,
+                solver_options=facade_solver_options,
+            )
+            @test uncertified_result.status == "solved"
+            @test isnothing(uncertified_result.certificate)
+
+            mixed_result = solve_prediction_market(
+                zero_market_problem;
+                mode=:mixed_enabled,
+                throw_on_fail=false,
+                max_doublings=0,
+                solver_options=facade_solver_options,
+            )
+            @test mixed_result.mode == "mixed_enabled"
+            @test isempty(mixed_result.trades)
+            @test mixed_result.split_merge.mint == 0.0
+            @test mixed_result.split_merge.merge == 0.0
+            @test mixed_result.final_collateral == 1.0
+            @test mixed_result.final_holdings == [0.0, 0.0]
         end
 
         @testset "route extraction" begin
             buy_problem = PredictionMarketProblem(
-                [0.8, 0.2],
-                1.0,
-                [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 100.0, 200.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 200.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.8, 0.0),
+                    OutcomeSpec("NO", 0.2, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 100.0, 200.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 200.0, 100.0, 1.0),
                 ],
             )
-            buy_result = solve_prediction_market(buy_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+            buy_result = solve_prediction_market(buy_problem; mode=:direct_only, solver_options=facade_solver_options)
             @test length(buy_result.trades) == 1
             @test buy_result.trades[1].market_id == "m1"
             @test buy_result.trades[1].collateral_delta < 0.0
             @test buy_result.trades[1].outcome_delta > 0.0
 
             sell_problem = PredictionMarketProblem(
-                [0.25, 0.75],
-                0.0,
-                [1.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 200.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 100.0, 200.0, 1.0),
+                    OutcomeSpec("YES", 0.25, 1.0),
+                    OutcomeSpec("NO", 0.75, 0.0),
+                ],
+                0.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 200.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 100.0, 200.0, 1.0),
                 ],
             )
-            sell_result = solve_prediction_market(sell_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+            sell_result = solve_prediction_market(sell_problem; mode=:direct_only, solver_options=facade_solver_options)
             sell_trade = only(filter(t -> t.market_id == "m1", sell_result.trades))
             @test sell_trade.collateral_delta > 0.0
             @test sell_trade.outcome_delta < 0.0
 
-            mint_problem = PredictionMarketProblem(
-                [0.55, 0.45],
-                1.0,
-                [0.0, 0.0],
+            missing_direct_problem = PredictionMarketProblem(
                 [
-                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.8, 0.0),
+                    OutcomeSpec("NO", 0.2, 0.0),
+                ],
+                1.0,
+                [ConstantProductMarketSpec("m_yes", "YES", 100.0, 200.0, 1.0)];
+                split_bound=5.0,
+            )
+            missing_direct = solve_prediction_market(missing_direct_problem; mode=:direct_only, solver_options=facade_solver_options)
+            @test !isempty(missing_direct.trades)
+            @test all(trade -> trade.outcome_id == "YES", missing_direct.trades)
+
+            missing_mixed_problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.55, 0.0),
+                    OutcomeSpec("NO", 0.45, 0.0),
+                ],
+                1.0,
+                [ConstantProductMarketSpec("m_yes", "YES", 100.0, 40.0, 1.0)];
+                split_bound=5.0,
+            )
+            missing_mixed = solve_prediction_market(
+                missing_mixed_problem;
+                mode=:mixed_enabled,
+                max_doublings=0,
+                throw_on_fail=false,
+                solver_options=facade_solver_options,
+            )
+            @test missing_mixed.mode == "mixed_enabled"
+            @test missing_mixed.split_merge.mint > 0.0
+            @test all(trade -> trade.outcome_id == "YES", missing_mixed.trades)
+
+            multi_pool_sell_problem = PredictionMarketProblem(
+                [OutcomeSpec("YES", 0.25, 200.0)],
+                0.0,
+                [
+                    ConstantProductMarketSpec("m_yes_a", "YES", 100.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m_yes_b", "YES", 60.0, 30.0, 1.0),
+                ],
+            )
+            multi_pool_sell = solve_prediction_market(multi_pool_sell_problem; mode=:direct_only, solver_options=facade_solver_options)
+            sell_trades = filter(trade -> trade.outcome_id == "YES" && trade.outcome_delta < 0.0, multi_pool_sell.trades)
+            @test length(sell_trades) == 2
+            @test Set(getfield.(sell_trades, :market_id)) == Set(["m_yes_a", "m_yes_b"])
+
+            mint_problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.55, 0.0),
+                    OutcomeSpec("NO", 0.45, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
                 ];
                 split_bound=5.0,
             )
             mint_result = solve_prediction_market(
                 mint_problem;
                 mode=:mixed_enabled,
-                pgtol=1e-8,
-                max_iter=5_000,
-                max_fun=10_000,
                 max_doublings=0,
                 throw_on_fail=false,
+                solver_options=facade_solver_options,
             )
             @test mint_result.split_merge.mint > 0.0
-            @test any(t -> t.outcome_delta < 0.0, mint_result.trades)
+            @test any(trade -> trade.outcome_delta < 0.0, mint_result.trades)
 
             merge_problem = PredictionMarketProblem(
-                [0.45, 0.55],
-                1.0,
-                [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 70.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 30.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.45, 0.0),
+                    OutcomeSpec("NO", 0.55, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 70.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 30.0, 100.0, 1.0),
                 ];
                 split_bound=5.0,
             )
-            merge_result = solve_prediction_market(merge_problem; mode=:mixed_enabled, pgtol=1e-8, max_iter=5_000, max_fun=10_000, throw_on_fail=false, max_doublings=0)
+            merge_result = solve_prediction_market(
+                merge_problem;
+                mode=:mixed_enabled,
+                throw_on_fail=false,
+                max_doublings=0,
+                solver_options=facade_solver_options,
+            )
             @test merge_result.split_merge.merge > 0.0
-            @test any(t -> t.outcome_delta > 0.0, merge_result.trades)
+            @test any(trade -> trade.outcome_delta > 0.0, merge_result.trades)
         end
 
-        @testset "public multi-tick support" begin
+        @testset "public UniV3 support" begin
             uni_problem = PredictionMarketProblem(
-                [0.2, 0.35],
-                0.0,
-                [1.0, 0.0],
                 [
-                    UniV3MarketSpec("u1", 1, 0.5, [UniV3LiquidityBand(0.25, 10.0), UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 12.0)], 0.997),
-                    UniV3MarketSpec("u2", 2, 0.5, [UniV3LiquidityBand(0.25, 8.0), UniV3LiquidityBand(1.0, 9.0), UniV3LiquidityBand(0.5, 11.0)], 0.997),
+                    OutcomeSpec("YES", 0.2, 1.0),
+                    OutcomeSpec("NO", 0.35, 0.0),
+                ],
+                0.0,
+                [
+                    UniV3MarketSpec("u1", "YES", 0.5, [UniV3LiquidityBand(0.25, 10.0), UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 12.0)], 0.997),
+                    UniV3MarketSpec("u2", "NO", 0.5, [UniV3LiquidityBand(0.25, 8.0), UniV3LiquidityBand(1.0, 9.0), UniV3LiquidityBand(0.5, 11.0)], 0.997),
                 ],
             )
-            uni_result = solve_prediction_market(uni_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000)
+            uni_result = solve_prediction_market(uni_problem; mode=:direct_only, solver_options=facade_solver_options)
             @test uni_result.status == "certified"
             @test length(uni_result.trades) == 1
             @test uni_result.trades[1].market_id == "u1"
             @test uni_result.trades[1].collateral_delta > 0.0
             @test uni_result.trades[1].outcome_delta < 0.0
-            @test uni_problem.markets[1].lower_ticks == [1.0, 0.5, 0.25]
-            @test uni_problem.markets[1].liquidity ≈ [100.0, 144.0, 100.0] atol=1e-12
+
+            encoded = JSON3.read(JSON3.write(uni_problem))
+            @test encoded.markets[1].type == "univ3"
+            @test hasproperty(encoded.markets[1], :bands)
+            @test !hasproperty(encoded.markets[1], :lower_ticks)
+            @test String(encoded.markets[1].outcome_id) == "YES"
+            @test encoded.markets[1].bands[1].lower_price == 1.0
+
+            hard_boundary = UniV3MarketSpec(
+                "u_boundary",
+                "YES",
+                0.75,
+                [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0)],
+                1.0,
+            )
+            hard_boundary_json = JSON3.read(JSON3.write(hard_boundary))
+            @test hard_boundary_json.bands[2].lower_price == 0.5
+            @test hard_boundary_json.bands[2].liquidity_L == 0.0
+            @test propertynames(hard_boundary) == (:market_id, :outcome_id, :current_price, :bands, :fee_multiplier)
+            @test propertynames(hard_boundary, true) == (:market_id, :outcome_id, :current_price, :bands, :fee_multiplier, :lower_ticks, :liquidity_k)
+            @test hard_boundary.bands == [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0)]
+            @test !hasproperty(hard_boundary, :lower_ticks)
+            @test !hasproperty(hard_boundary, :liquidity_k)
+            hard_boundary_repr = sprint(show, hard_boundary)
+            @test occursin("UniV3MarketSpec", hard_boundary_repr)
+            @test occursin("bands", hard_boundary_repr)
+            @test !occursin("lower_ticks", hard_boundary_repr)
+            @test !occursin("liquidity_k", hard_boundary_repr)
+
+            @test_throws ArgumentError UniV3MarketSpec(
+                "u_bad_leading",
+                "YES",
+                0.75,
+                [UniV3LiquidityBand(1.0, 0.0), UniV3LiquidityBand(0.5, 10.0)],
+                1.0,
+            )
+            @test_throws ArgumentError UniV3MarketSpec(
+                "u_bad_double_zero",
+                "YES",
+                0.75,
+                [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0), UniV3LiquidityBand(0.25, 0.0)],
+                1.0,
+            )
+        end
+
+        @testset "UniV3 boundary exhaustion" begin
+            boundary_problem = PredictionMarketProblem(
+                [OutcomeSpec("YES", 1.5, 0.0)],
+                10.0,
+                [UniV3MarketSpec("u1", "YES", 0.75, [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0)], 1.0)],
+            )
+            boundary_result = solve_prediction_market(boundary_problem; mode=:direct_only, solver_options=facade_solver_options)
+            buy_trade = only(boundary_result.trades)
+            @test buy_trade.market_id == "u1"
+            @test buy_trade.outcome_delta > 0.0
+            @test buy_trade.collateral_delta < 0.0
+            @test boundary_result.final_collateral > 0.0
+            @test boundary_result.final_holdings[1] < 10.0
         end
 
         @testset "family comparison helper" begin
             comparison_problem = PredictionMarketProblem(
-                [0.55, 0.45],
-                1.0,
-                [0.0, 0.0],
                 [
-                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.55, 0.0),
+                    OutcomeSpec("NO", 0.45, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
                 ];
                 split_bound=5.0,
             )
-            direct_result = solve_prediction_market(comparison_problem; mode=:direct_only, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0)
+            direct_result = solve_prediction_market(comparison_problem; mode=:direct_only, max_doublings=0, solver_options=facade_solver_options)
             mixed_result = solve_prediction_market(
                 comparison_problem;
                 mode=:mixed_enabled,
-                pgtol=1e-8,
-                max_iter=5_000,
-                max_fun=10_000,
                 max_doublings=0,
                 throw_on_fail=false,
+                solver_options=facade_solver_options,
             )
             comparison = compare_prediction_market_families(
                 comparison_problem;
-                pgtol=1e-8,
-                max_iter=5_000,
-                max_fun=10_000,
                 max_doublings=0,
                 throw_on_fail=false,
+                solver_options=facade_solver_options,
             )
 
             @test comparison.direct_only.final_ev ≈ direct_result.final_ev atol=1e-8
-            @test comparison.direct_only.final_cash ≈ direct_result.final_cash atol=1e-8
+            @test comparison.direct_only.final_collateral ≈ direct_result.final_collateral atol=1e-8
             @test comparison.mixed_enabled.final_ev ≈ mixed_result.final_ev atol=1e-8
             @test comparison.mixed_enabled.split_merge.mint ≈ mixed_result.split_merge.mint atol=1e-8
         end
 
-        @testset "worker protocol" begin
-            @test ForecastFlows._prediction_market_worker_error_code(ArgumentError("bad")) == "invalid_request"
-            @test ForecastFlows._prediction_market_worker_error_code(ForecastFlows._PredictionMarketWorkerSolveFailed("bad")) == "solve_failed"
-            @test ForecastFlows._prediction_market_worker_error_code(ErrorException("bad")) == "internal_error"
-
-            worker_problem = PredictionMarketProblem(
-                [0.55, 0.45],
-                1.0,
-                [0.0, 0.0],
+        @testset "workspace hot loop" begin
+            workspace_problem = PredictionMarketProblem(
                 [
-                    ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+                    OutcomeSpec("YES", 0.8, 0.0),
+                    OutcomeSpec("NO", 0.2, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m_yes_a", "YES", 100.0, 200.0, 1.0),
+                    ConstantProductMarketSpec("m_yes_b", "YES", 80.0, 160.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+            workspace = ForecastFlows.PredictionMarketWorkspace(workspace_problem)
+            @test propertynames(workspace) == (:outcome_ids, :market_ids)
+            @test propertynames(workspace, true) == (:outcome_ids, :market_ids, :layout, :direct_solver, :mixed_solver, :direct_seed, :mixed_seed)
+            @test workspace.outcome_ids == ["YES", "NO"]
+            @test workspace.market_ids == ["m_yes_a", "m_yes_b"]
+            @test !hasproperty(workspace, :layout)
+            @test !hasproperty(workspace, :direct_solver)
+            workspace_repr = sprint(show, workspace)
+            @test occursin("PredictionMarketWorkspace", workspace_repr)
+            @test occursin("2 outcomes", workspace_repr)
+            @test occursin("2 markets", workspace_repr)
+            @test !occursin("layout", workspace_repr)
+            @test !occursin("Solver", workspace_repr)
+            stateless_direct = solve_prediction_market(
+                workspace_problem;
+                mode=:direct_only,
+                solver_options=facade_solver_options,
+            )
+            workspace_direct = ForecastFlows.solve_prediction_market!(
+                workspace,
+                workspace_problem;
+                mode=:direct_only,
+                solver_options=facade_solver_options,
+            )
+            @test workspace_direct.final_ev ≈ stateless_direct.final_ev atol=1e-8
+            @test workspace_direct.final_holdings ≈ stateless_direct.final_holdings atol=1e-8
+
+            updated_problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.7, 0.2),
+                    OutcomeSpec("NO", 0.3, 0.0),
+                ],
+                0.9,
+                [
+                    ConstantProductMarketSpec("m_yes_a", "YES", 96.0, 210.0, 1.0),
+                    ConstantProductMarketSpec("m_yes_b", "YES", 82.0, 150.0, 1.0),
+                ];
+                split_bound=4.0,
+            )
+            updated_stateless = solve_prediction_market(
+                updated_problem;
+                mode=:direct_only,
+                solver_options=facade_solver_options,
+            )
+            updated_workspace = ForecastFlows.solve_prediction_market!(
+                workspace,
+                updated_problem;
+                mode=:direct_only,
+                solver_options=facade_solver_options,
+            )
+            @test updated_workspace.final_ev ≈ updated_stateless.final_ev atol=1e-8
+            @test updated_workspace.outcome_ids == ["YES", "NO"]
+            @test all(trade -> trade.outcome_id == "YES", updated_workspace.trades)
+
+            mismatched_problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("YES", 0.8, 0.0),
+                    OutcomeSpec("NO", 0.2, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m_yes_a", "YES", 100.0, 200.0, 1.0),
+                    ConstantProductMarketSpec("m_no", "NO", 80.0, 160.0, 1.0),
+                ];
+                split_bound=5.0,
+            )
+            @test_throws ArgumentError ForecastFlows.solve_prediction_market!(
+                workspace,
+                mismatched_problem;
+                mode=:direct_only,
+                solver_options=facade_solver_options,
+            )
+        end
+
+        @testset "worker protocol" begin
+            worker_problem = PredictionMarketProblem(
+                [
+                    OutcomeSpec("1", 0.55, 0.0),
+                    OutcomeSpec("2", 0.45, 0.0),
+                ],
+                1.0,
+                [
+                    ConstantProductMarketSpec("m1", "1", 40.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "2", 70.0, 100.0, 1.0),
                 ];
                 split_bound=5.0,
             )
@@ -1832,12 +2212,14 @@ end
             @test String(roundtrip_problem.markets[2].market_id) == "m2"
 
             worker_uni_problem = PredictionMarketProblem(
-                [0.2, 0.35],
-                0.0,
-                [1.0, 0.0],
                 [
-                    UniV3MarketSpec("u1", 1, 0.5, [UniV3LiquidityBand(0.25, 10.0), UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 12.0)], 0.997),
-                    UniV3MarketSpec("u2", 2, 0.5, [UniV3LiquidityBand(0.25, 8.0), UniV3LiquidityBand(1.0, 9.0), UniV3LiquidityBand(0.5, 11.0)], 0.997),
+                    OutcomeSpec("1", 0.2, 1.0),
+                    OutcomeSpec("2", 0.35, 0.0),
+                ],
+                0.0,
+                [
+                    UniV3MarketSpec("u1", "1", 0.5, [UniV3LiquidityBand(0.25, 10.0), UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 12.0)], 0.997),
+                    UniV3MarketSpec("u2", "2", 0.5, [UniV3LiquidityBand(0.25, 8.0), UniV3LiquidityBand(1.0, 9.0), UniV3LiquidityBand(0.5, 11.0)], 0.997),
                 ],
             )
             worker_uni_json = JSON3.read(JSON3.write(worker_uni_problem))
@@ -1846,9 +2228,27 @@ end
             @test !hasproperty(worker_uni_json.markets[1], :lower_ticks)
             @test worker_uni_json.markets[1].bands[1].lower_price == 1.0
 
-            legacy_uni_response = ForecastFlows.prediction_market_worker_response(JSON3.write((
-                protocol_version=1,
-                request_id="legacy-uni",
+            parsed_health = ForecastFlows.parse_protocol_request(JSON3.write((
+                protocol_version=2,
+                request_id="health",
+                command="health",
+            )))
+            @test parsed_health isa ForecastFlows.HealthRequest
+
+            rendered_health = JSON3.read(ForecastFlows.handle_protocol_json(JSON3.write((
+                protocol_version=2,
+                request_id="health",
+                command="health",
+            ))))
+            @test rendered_health.ok
+            @test rendered_health.result.status == "ok"
+            @test rendered_health.result.package_version == "2.0.0"
+            @test String.(collect(rendered_health.result.stable_interfaces)) == ["prediction_market_facade", "ndjson_protocol"]
+            @test String.(collect(rendered_health.result.public_interfaces)) == expected_public_interfaces
+
+            legacy_problem_shape_response = JSON3.read(ForecastFlows.handle_protocol_json(JSON3.write((
+                protocol_version=2,
+                request_id="legacy-problem-shape",
                 command="solve_prediction_market",
                 mode="direct_only",
                 problem=(
@@ -1856,22 +2256,93 @@ end
                     initial_cash=0.0,
                     initial_holdings=[1.0, 0.0],
                     markets=[
-                        (type="univ3", market_id="u1", outcome_index=1, current_price=0.5, lower_ticks=[1.0, 0.5, 0.25], liquidity=[100.0, 144.0, 100.0], fee_multiplier=0.997),
-                        (type="univ3", market_id="u2", outcome_index=2, current_price=0.5, lower_ticks=[1.0, 0.5, 0.25], liquidity=[81.0, 121.0, 64.0], fee_multiplier=0.997),
+                        (type="constant_product", market_id="m1", outcome_id="1", collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                        (type="constant_product", market_id="m2", outcome_id="2", collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
                     ],
                 ),
-                solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000),
-            )))
-            @test legacy_uni_response.ok
-            @test legacy_uni_response.result.mode == "direct_only"
-            @test legacy_uni_response.result.trades[1].market_id == "u1"
+            ))))
+            @test !legacy_problem_shape_response.ok
+            @test legacy_problem_shape_response.error.code == "invalid_request"
+            @test occursin("problem.outcomes and problem.collateral_balance", String(legacy_problem_shape_response.error.message))
+
+            legacy_univ3_shape_response = JSON3.read(ForecastFlows.handle_protocol_json(JSON3.write((
+                protocol_version=2,
+                request_id="legacy-univ3-shape",
+                command="solve_prediction_market",
+                mode="direct_only",
+                problem=(
+                    outcomes=[
+                        (outcome_id="1", fair_value=0.2, initial_holding=1.0),
+                        (outcome_id="2", fair_value=0.35, initial_holding=0.0),
+                    ],
+                    collateral_balance=0.0,
+                    markets=[
+                        (type="univ3", market_id="u1", outcome_id="1", current_price=0.5, lower_ticks=[1.0, 0.5], liquidity=[100.0, 0.0], fee_multiplier=0.997),
+                        (type="univ3", market_id="u2", outcome_id="2", current_price=0.5, bands=[(lower_price=1.0, liquidity_L=9.0)], fee_multiplier=0.997),
+                    ],
+                ),
+            ))))
+            @test !legacy_univ3_shape_response.ok
+            @test legacy_univ3_shape_response.error.code == "invalid_request"
+            @test occursin("bands is required", String(legacy_univ3_shape_response.error.message))
+
+            interior_zero_band_response = JSON3.read(ForecastFlows.handle_protocol_json(JSON3.write((
+                protocol_version=2,
+                request_id="interior-zero-band",
+                command="solve_prediction_market",
+                mode="direct_only",
+                problem=(
+                    outcomes=[(outcome_id="1", fair_value=0.75, initial_holding=0.0)],
+                    collateral_balance=1.0,
+                    markets=[(
+                        type="univ3",
+                        market_id="u1",
+                        outcome_id="1",
+                        current_price=0.75,
+                        bands=[
+                            (lower_price=1.0, liquidity_L=0.0),
+                            (lower_price=0.5, liquidity_L=10.0),
+                        ],
+                        fee_multiplier=1.0,
+                    )],
+                ),
+            ))))
+            @test !interior_zero_band_response.ok
+            @test interior_zero_band_response.error.code == "invalid_request"
+            @test occursin("zero-liquidity band must be the final band", String(interior_zero_band_response.error.message))
+
+            duplicate_zero_band_response = JSON3.read(ForecastFlows.handle_protocol_json(JSON3.write((
+                protocol_version=2,
+                request_id="duplicate-zero-band",
+                command="solve_prediction_market",
+                mode="direct_only",
+                problem=(
+                    outcomes=[(outcome_id="1", fair_value=0.75, initial_holding=0.0)],
+                    collateral_balance=1.0,
+                    markets=[(
+                        type="univ3",
+                        market_id="u1",
+                        outcome_id="1",
+                        current_price=0.75,
+                        bands=[
+                            (lower_price=1.0, liquidity_L=10.0),
+                            (lower_price=0.5, liquidity_L=0.0),
+                            (lower_price=0.25, liquidity_L=0.0),
+                        ],
+                        fee_multiplier=1.0,
+                    )],
+                ),
+            ))))
+            @test !duplicate_zero_band_response.ok
+            @test duplicate_zero_band_response.error.code == "invalid_request"
+            @test occursin("at most one zero-liquidity terminal band", String(duplicate_zero_band_response.error.message))
 
             worker_script = joinpath(dirname(@__DIR__), "bin", "forecastflows-worker.jl")
             cmd = `$(Base.julia_cmd()) --project=$(dirname(@__DIR__)) $(worker_script)`
             requests = [
-                (protocol_version=1, request_id="health", command="health"),
+                (protocol_version=2, request_id="health", command="health"),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="solve",
                     command="solve_prediction_market",
                     mode="mixed_enabled",
@@ -1879,7 +2350,7 @@ end
                     solve_options=(throw_on_fail=false, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="clipped-default",
                     command="solve_prediction_market",
                     mode="mixed_enabled",
@@ -1887,14 +2358,14 @@ end
                     solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="compare",
                     command="compare_prediction_market_families",
                     problem=worker_problem,
                     solve_options=(throw_on_fail=false, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="uni",
                     command="solve_prediction_market",
                     mode="direct_only",
@@ -1902,132 +2373,134 @@ end
                     solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="uncertified-json",
                     command="solve_prediction_market",
                     mode="mixed_enabled",
-                    problem=(
-                        outcome_values=[0.55, 0.45],
-                        initial_cash=1.0,
-                        initial_holdings=[0.0, 0.0],
-                        markets=[
-                            (type="constant_product", market_id="m1", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
-                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
-                        ],
-                    ),
+                    problem=worker_problem,
                     solve_options=(throw_on_fail=false, pgtol=1e-8, max_iter=5_000, max_fun=10_000),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="wei",
                     command="solve_prediction_market",
                     mode="direct_only",
                     problem=(
-                        outcome_values=[0.55, 0.45],
-                        initial_cash="1000000000000000000",
-                        initial_holdings=[0.0, 0.0],
+                        outcomes=[
+                            (outcome_id="1", fair_value=0.55, initial_holding=0.0),
+                            (outcome_id="2", fair_value=0.45, initial_holding=0.0),
+                        ],
+                        collateral_balance="1000000000000000000",
                         markets=[
-                            (type="constant_product", market_id="m1", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
-                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m1", outcome_id="1", collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_id="2", collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
                         ],
                     ),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="bool",
                     command="solve_prediction_market",
                     mode="direct_only",
                     problem=(
-                        outcome_values=[0.55, 0.45],
-                        initial_cash=true,
-                        initial_holdings=[0.0, 0.0],
+                        outcomes=[
+                            (outcome_id="1", fair_value=0.55, initial_holding=0.0),
+                            (outcome_id="2", fair_value=0.45, initial_holding=0.0),
+                        ],
+                        collateral_balance=true,
                         markets=[
-                            (type="constant_product", market_id="m1", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
-                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m1", outcome_id="1", collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_id="2", collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
                         ],
                     ),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="invalid",
                     command="solve_prediction_market",
                     mode="bad_mode",
                     problem=worker_problem,
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="missing-market-id",
                     command="solve_prediction_market",
                     problem=(
-                        outcome_values=[0.55, 0.45],
-                        initial_cash=1.0,
-                        initial_holdings=[0.0, 0.0],
+                        outcomes=[
+                            (outcome_id="1", fair_value=0.55, initial_holding=0.0),
+                            (outcome_id="2", fair_value=0.45, initial_holding=0.0),
+                        ],
+                        collateral_balance=1.0,
                         markets=[
-                            (type="constant_product", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
-                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", outcome_id="1", collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_id="2", collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
                         ],
                     ),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="missing-band-field",
                     command="solve_prediction_market",
                     mode="direct_only",
                     problem=(
-                        outcome_values=[0.2, 0.35],
-                        initial_cash=0.0,
-                        initial_holdings=[1.0, 0.0],
+                        outcomes=[
+                            (outcome_id="1", fair_value=0.2, initial_holding=1.0),
+                            (outcome_id="2", fair_value=0.35, initial_holding=0.0),
+                        ],
+                        collateral_balance=0.0,
                         markets=[
-                            (type="univ3", market_id="u1", outcome_index=1, current_price=0.5, bands=[(lower_price=1.0,)], fee_multiplier=0.997),
-                            (type="univ3", market_id="u2", outcome_index=2, current_price=0.5, bands=[(lower_price=1.0, liquidity_L=9.0)], fee_multiplier=0.997),
+                            (type="univ3", market_id="u1", outcome_id="1", current_price=0.5, bands=[(lower_price=1.0,)], fee_multiplier=0.997),
+                            (type="univ3", market_id="u2", outcome_id="2", current_price=0.5, bands=[(lower_price=1.0, liquidity_L=9.0)], fee_multiplier=0.997),
                         ],
                     ),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="bad-max-iter",
                     command="solve_prediction_market",
                     problem=worker_problem,
                     solve_options=(max_iter="oops",),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="bad-certify",
                     command="solve_prediction_market",
                     problem=worker_problem,
                     solve_options=(certify="oops",),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="bad-number",
                     command="solve_prediction_market",
                     problem=(
-                        outcome_values=[0.55, 0.45],
-                        initial_cash="oops",
-                        initial_holdings=[0.0, 0.0],
+                        outcomes=[
+                            (outcome_id="1", fair_value=0.55, initial_holding=0.0),
+                            (outcome_id="2", fair_value=0.45, initial_holding=0.0),
+                        ],
+                        collateral_balance="oops",
                         markets=[
-                            (type="constant_product", market_id="m1", outcome_index=1, collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
-                            (type="constant_product", market_id="m2", outcome_index=2, collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m1", outcome_id="1", collateral_reserve=40.0, outcome_reserve=100.0, fee_multiplier=1.0),
+                            (type="constant_product", market_id="m2", outcome_id="2", collateral_reserve=70.0, outcome_reserve=100.0, fee_multiplier=1.0),
                         ],
                     ),
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="missing-problem",
                     command="solve_prediction_market",
                 ),
                 (
-                    protocol_version=2,
+                    protocol_version=3,
                     request_id="bad-version",
                     command="health",
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="bad-command",
                     command="wat",
                 ),
                 (
-                    protocol_version=1,
+                    protocol_version=2,
                     request_id="solve-failed",
                     command="solve_prediction_market",
                     mode="mixed_enabled",
@@ -2044,15 +2517,16 @@ end
             @test responses[1].ok
             @test responses[1].request_id == "health"
             @test responses[1].result.status == "ok"
-            @test responses[1].result.supported_interfaces == ["julia_facade", "json_worker"]
-            @test responses[1].result.outcome_indexing == "1-based"
-            @test responses[1].result.numeric_units == "decimal token units"
-            @test responses[1].result.execution_model == "serial"
+            @test String.(collect(responses[1].result.stable_interfaces)) == ["prediction_market_facade", "ndjson_protocol"]
+            @test String.(collect(responses[1].result.public_interfaces)) == expected_public_interfaces
+            @test responses[1].result.numeric_units == "decimal collateral and outcome token units"
+            @test occursin("stateless NDJSON", String(responses[1].result.execution_model))
 
             @test responses[2].ok
             @test responses[2].request_id == "solve"
             @test responses[2].result.mode == "mixed_enabled"
             @test responses[2].result.split_merge.mint > 0.0
+            @test responses[2].result.trades[1].outcome_id == "1"
 
             @test !responses[3].ok
             @test responses[3].request_id == "clipped-default"
@@ -2068,6 +2542,7 @@ end
             @test responses[5].request_id == "uni"
             @test responses[5].result.mode == "direct_only"
             @test responses[5].result.trades[1].market_id == "u1"
+            @test responses[5].result.trades[1].outcome_id == "1"
 
             @test responses[6].ok
             @test responses[6].request_id == "uncertified-json"
@@ -2113,7 +2588,7 @@ end
             @test !responses[14].ok
             @test responses[14].request_id == "bad-number"
             @test responses[14].error.code == "invalid_request"
-            @test occursin("problem.initial_cash must be parseable as Float64", String(responses[14].error.message))
+            @test occursin("problem.collateral_balance must be parseable as Float64", String(responses[14].error.message))
 
             @test !responses[15].ok
             @test responses[15].request_id == "missing-problem"
@@ -2123,7 +2598,7 @@ end
             @test !responses[16].ok
             @test responses[16].request_id == "bad-version"
             @test responses[16].error.code == "invalid_request"
-            @test occursin("unsupported protocol_version 2", String(responses[16].error.message))
+            @test occursin("unsupported protocol_version 3", String(responses[16].error.message))
 
             @test !responses[17].ok
             @test responses[17].request_id == "bad-command"

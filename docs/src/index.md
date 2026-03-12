@@ -10,7 +10,7 @@ mint/merge hyperedge.
 
 ### Documentation Contents:
 ```@contents
-Pages = ["index.md", "prediction_market_router.md", "integration.md", "guide.md", "method.md", "api.md"]
+Pages = ["index.md", "prediction_market_router.md", "integration.md", "architecture.md", "migration_v2.md", "guide.md", "method.md", "api.md"]
 Depth = 1
 ```
 ##### Examples:
@@ -57,20 +57,27 @@ The prediction-market router is built on the same dual-decomposition idea:
 
 - one collateral node
 - one outcome node per market outcome
-- one AMM edge per collateral/outcome market
+- zero or more AMM edges per outcome
 - one `SplitMergeEdge` with local ordering `[collateral, outcomes...]`
 
 The recommended public interface for new prediction-market work is now the
 prediction-market facade:
 
+- `OutcomeSpec`
 - `PredictionMarketProblem`
 - `ConstantProductMarketSpec`
 - `UniV3MarketSpec`
 - `solve_prediction_market`
 - `compare_prediction_market_families`
 
+The advanced repeated-solve API remains available by qualified access:
+
+- `ForecastFlows.PredictionMarketWorkspace`
+- `ForecastFlows.solve_prediction_market!`
+
 The root solver API remains available underneath this facade for custom convex
-flow models and research work.
+flow models and research work, but it is no longer part of the exported stable
+surface.
 
 The older two-node `problem` interface remains available as legacy code, but it
 is not the recommended entrypoint for prediction-market routing.

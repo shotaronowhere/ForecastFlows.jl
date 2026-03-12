@@ -1,0 +1,9 @@
+{
+  "protocol_version": 2,
+  "request_id": "bad-version-fixture",
+  "ok": false,
+  "error": {
+    "code": "invalid_request",
+    "message": "ArgumentError: unsupported protocol_version 3"
+  }
+}

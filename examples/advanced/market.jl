@@ -4,6 +4,7 @@ This example uses `ForecastFlows` to solve a market clearing problem
 =#
 
 using ForecastFlows
+import ForecastFlows: Edge, Objective, BFGSOptions, problem, solve!
 using Random, LinearAlgebra, SparseArrays
 using Plots, LogExpFunctions
 

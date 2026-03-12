@@ -5,6 +5,7 @@ This example uses `ForecastFlows` to solve a CFMM order routing problem
 =#
 
 using ForecastFlows
+import ForecastFlows: Edge, Linear, BFGSOptions, problem, solve!
 using Random, LinearAlgebra, SparseArrays
 using Plots
 import Graphs: Graph

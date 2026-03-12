@@ -32,6 +32,7 @@ optimizations.
 =#
 
 using ForecastFlows
+import ForecastFlows: Edge, Objective, NonpositiveQuadratic, Solver, problem, solve!
 using Random, LinearAlgebra, SparseArrays
 using Plots, LogExpFunctions, StatsBase
 using Graphs: Graph, connected_components

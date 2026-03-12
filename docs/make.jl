@@ -51,6 +51,7 @@ advanced_nav = fix_suffix.(joinpath.("advanced", readdir(joinpath(@__DIR__, "../
 
 makedocs(;
     modules=[ForecastFlows],
+    checkdocs=:public,
     authors="Theo Diamandis and ForecastFlows contributors",
     repo="https://github.com/shotaronowhere/ForecastFlows.jl/blob/{commit}{path}#L{line}",
     sitename="ForecastFlows.jl",
@@ -64,6 +65,8 @@ makedocs(;
         "Home" => "index.md",
         "Prediction Market Router" => "prediction_market_router.md",
         "Integration Guide" => "integration.md",
+        "Architecture" => "architecture.md",
+        "Migration v2" => "migration_v2.md",
         "Examples" => examples_nav,
         "Advanced Usage" => advanced_nav,
         "User Guide" => "guide.md",

@@ -7,6 +7,7 @@ decomposition framework from Theo Diamandis's *Convex Network Flows*.
 The package now exposes two supported prediction-market integration surfaces:
 
 - an in-process Julia facade:
+  - `OutcomeSpec`
   - `PredictionMarketProblem`
   - `ConstantProductMarketSpec`
   - `UniV3MarketSpec`
@@ -18,27 +19,33 @@ The package now exposes two supported prediction-market integration surfaces:
 The prediction-market router models:
 
 - one collateral asset
-- one AMM edge per collateral/outcome market
+- zero or more AMM edges per outcome
 - one fee-free mint/merge hyperedge
 
 This lets the solver discover direct and synthetic routes from shadow-price
 equilibration instead of explicit path enumeration.
 
-## Install v1.0.0
+## Install v2.0.0
 
-Until the package is published in the General registry, install the tagged
-source release directly:
+Once `v2.0.0` is tagged, install the source release directly:
 
 ```julia
 using Pkg
 
-Pkg.add(url="https://github.com/shotaronowhere/ForecastFlows.jl", rev="v1.0.0")
+Pkg.add(url="https://github.com/shotaronowhere/ForecastFlows.jl", rev="v2.0.0")
 ```
 
-The supported v1 dependency surfaces are:
+For local development in a checkout, use `Pkg.develop(path=pwd())`.
+
+The supported v2 dependency surfaces are:
 
 - the Julia prediction-market facade
 - the newline-delimited JSON worker at `bin/forecastflows-worker.jl`
+
+The advanced repeated-solve Julia API is available by qualified access:
+
+- `ForecastFlows.PredictionMarketWorkspace`
+- `ForecastFlows.solve_prediction_market!`
 
 ## Dependency quickstart
 
@@ -48,17 +55,38 @@ Use the Julia facade directly:
 using ForecastFlows
 
 problem = PredictionMarketProblem(
-    [0.55, 0.45],
-    1.0,
-    [0.0, 0.0],
     [
-        ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-        ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+        OutcomeSpec("YES", 0.55, 0.0),
+        OutcomeSpec("NO", 0.45, 0.0),
+    ],
+    1.0,
+    [
+        ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+        ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
     ];
     split_bound=5.0,
 )
 
-result = solve_prediction_market(problem; mode=:mixed_enabled, max_doublings=0, throw_on_fail=false)
+result = solve_prediction_market(
+    problem;
+    mode=:mixed_enabled,
+    max_doublings=0,
+    throw_on_fail=false,
+    solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+)
+```
+
+For hot loops, reuse a workspace:
+
+```julia
+workspace = ForecastFlows.PredictionMarketWorkspace(problem)
+
+result = ForecastFlows.solve_prediction_market!(
+    workspace,
+    problem;
+    mode=:direct_only,
+    solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+)
 ```
 
 Prediction-market solves fail closed by default. If certification fails, or if a
@@ -72,13 +100,14 @@ Or run the worker and call it from Rust or another driver:
 julia --project bin/forecastflows-worker.jl
 ```
 
-Worker requests are newline-delimited JSON with `protocol_version = 1`. The
+Worker requests are newline-delimited JSON with `protocol_version = 2`. The
 worker returns:
 
 - signed direct AMM trades keyed by `market_id`
+- trades and holdings keyed by stable `outcome_id`
 - aggregate mint and merge amounts
 - initial and final EV
-- final cash and holdings
+- final collateral and holdings
 - certification metadata
 
 Worker numeric inputs must be decimal-scaled token units, not raw wei or other
@@ -91,7 +120,7 @@ bands:
 {
   "type": "univ3",
   "market_id": "u1",
-  "outcome_index": 1,
+  "outcome_id": "YES",
   "current_price": 0.5,
   "bands": [
     {"lower_price": 1.0, "liquidity_L": 10.0},
@@ -102,20 +131,27 @@ bands:
 }
 ```
 
-The legacy low-level form using `lower_ticks` and `liquidity` remains accepted,
-but those fields are less intuitive: `lower_ticks` are descending prices, not
-integer ticks, and `liquidity` is the internal `L^2` weight.
+Markets may omit some outcomes entirely when no direct venue is available, and
+multiple markets may share the same `outcome_id` when several venues exist for
+one outcome. Concentrated-liquidity boundaries are handled inside the `UniV3`
+edge model; once a side is exhausted, that edge simply contributes no further
+flow. When a venue has a hard terminal price boundary, represent it with one
+optional final `bands` entry whose `liquidity_L` is `0.0`.
+
+If `markets=[]`, `mode=:direct_only` returns the trivial no-trade route.
+`mode=:mixed_enabled` remains valid because the split/merge hyperedge is still a
+real edge even without any direct AMMs.
 
 Gas modeling, tx construction, tx packing, and chain interaction remain driver
 responsibilities.
 
-## v1 support matrix
+## v2 support matrix
 
-- Julia compat floor: `1.10`
-- CI-tested Julia versions: `1.10`, `1.12`
-- Linux `x64`
-- macOS `x64`
-- supported interfaces: Julia facade and JSON worker only
+- Julia compat floor: `1.12`
+- CI-tested Julia versions: `1.12`
+- CI-tested platforms: Linux `x64`, macOS `x64`
+- locally release-verified: macOS `arm64`, Julia `1.12`
+- supported interfaces: Julia facade and NDJSON worker only
 
 ## Deep-Trading Benchmark Sweep
 
@@ -144,13 +180,19 @@ This benchmark is a release regression benchmark under the aligned surrogate
 execution model. It is not a claim of exact on-chain net EV or blanket
 solver-vs-solver dominance.
 
-## v1.0.0 release scope
+The realistic 98-outcome latency smoke at `bin/latency-smoke.jl` now uses the
+same public `bands` representation with one exact trailing zero-liquidity
+terminal band, so its repeated-solve measurements no longer rely on an
+approximate extra band.
 
-See `CHANGELOG.md` for the v1.0.0 release notes. The important scope boundary is:
+## v2.0.0 release scope
 
-- `ForecastFlows` v1 is a dependency-grade solver release, not a full trading engine
+See `CHANGELOG.md` for the v2.0.0 release notes. The important scope boundary is:
+
+- `ForecastFlows` v2 is a dependency-grade solver release, not a full trading engine
 - Rust or another driver still owns supervision, timeouts, gas, tx building, and chain I/O
-- `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not benchmark truth
+- the stable public API is the prediction-market facade plus the NDJSON worker
+- low-level solver interfaces and gas-pruning helpers remain available only as research-oriented qualified Julia APIs
 
 The intended production boundary is the solver and worker contract. Live
 rebalancing still depends on the external driver layer that owns execution,
@@ -170,7 +212,7 @@ Run the opt-in Deep-Trading benchmark sweep:
 FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK=1 julia --project -e 'using Pkg; Pkg.test()'
 ```
 
-Run the full v1 release gate:
+Run the full v2 release gate:
 
 ```bash
 julia --project bin/release-check.jl
@@ -203,12 +245,16 @@ julia --project=docs docs/make.jl
 - The public dependency API returns abstract route plans, not executable tx bundles.
 - Executable benchmark results come from a no-flash replay layer.
 - Split/merge recovery is specialized to a single `SplitMergeEdge`.
-- `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not the
-  Deep-Trading benchmark comparator.
+- Internal gas-pruning helpers are research APIs, not part of the stable v2 dependency surface.
+- Any future reusable pricing helper should remain non-stable and caller-supplied:
+  action schedule, gas price in the native token, `native_token_price_in_collateral`,
+  L1 data-fee inputs, and packing limits.
 - The Deep-Trading benchmark sweep is opt-in, not a default CI gate.
 - Driver-side production safeguards such as tx simulation, reserve freshness,
   block-level gas budgeting, monitoring, and automated shutdown logic are out
   of scope for this package.
+- Julia 1.12 docs builds currently emit upstream `Compose` / `GraphPlot`
+  warnings from example dependencies; they are non-blocking for `v2.0.0`.
 
 ## Optional sysimage
 

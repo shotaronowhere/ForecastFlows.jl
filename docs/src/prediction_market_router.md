@@ -5,7 +5,7 @@ hypergraph:
 
 - node `1`: collateral
 - nodes `2:(N+1)`: mutually exclusive outcome tokens
-- one AMM edge per collateral/outcome market
+- zero or more AMM edges per outcome
 - one fee-free `SplitMergeEdge` with local ordering `[collateral, outcomes...]`
 
 The router is independent of the Deep-Trading waterfall algorithm. It uses the
@@ -21,18 +21,30 @@ Use the prediction-market facade:
 using ForecastFlows
 
 problem = PredictionMarketProblem(
-    predictions,
-    cash0,
-    holdings0,
-    markets;
-    split_bound=split_bound,
+    [
+        OutcomeSpec("YES", 0.55, 0.0),
+        OutcomeSpec("NO", 0.45, 0.0),
+    ],
+    1.0,
+    [
+        ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+        ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
+    ];
+    split_bound=5.0,
 )
 
-result = solve_prediction_market(problem; mode=:mixed_enabled, max_doublings=0, throw_on_fail=false)
+result = solve_prediction_market(
+    problem;
+    mode=:mixed_enabled,
+    max_doublings=0,
+    throw_on_fail=false,
+    solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+)
 ```
 
-The public routing surface for this extension is:
+The stable public routing surface is:
 
+- `OutcomeSpec`
 - `PredictionMarketProblem`
 - `ConstantProductMarketSpec`
 - `UniV3MarketSpec`
@@ -44,6 +56,10 @@ The public routing surface for this extension is:
 - `solve_prediction_market`
 - `compare_prediction_market_families`
 
+Direct-only problems with `markets=[]` are valid and return the trivial
+no-trade route. Mixed-enabled problems with no direct AMMs are also valid
+because split/merge remains a first-class hyperedge.
+
 Prediction-market solves fail closed by default. If certification fails, or if a
 mixed solve still has a near-active split/merge bound after the allowed
 doublings, `solve_prediction_market` throws instead of quietly returning a
@@ -51,27 +67,32 @@ clipped route. Pass `throw_on_fail=false` only when you explicitly want to
 inspect an uncertified result.
 
 If `split_bound` is omitted, mixed solves seed it from
-`initial_cash + sum(initial_holdings)` with a tiny positive floor. That keeps a
-zero-balance portfolio on the zero-trade route instead of tripping the
+`collateral_balance + sum(initial_holding)` with a tiny positive floor. That
+keeps a zero-balance portfolio on the zero-trade route instead of tripping the
 near-active split/merge guard at a literal bound of `0`.
 
 The lower-level `Solver` / `SplitMergeEdge` / `EndowmentLinear` interface
-remains available and is still the right escape hatch for custom routing
-experiments. The new facade is the stable package boundary for the standard
-one-collateral, one-market-per-outcome use case.
+remains available as qualified Julia API for custom routing experiments, but it
+is no longer part of the exported stable package surface.
 
-For non-Julia drivers, the supported v1 production interface is the worker
-protocol, not embedded Julia or FFI.
+## Repeated solves
 
-The benchmark-only single-tick edge and replay engine live in tests on purpose.
-They are comparison machinery for the vendored Deep-Trading fixtures, not
-public package API.
+For repeated calls from a Julia hot loop, use the workspace API:
 
-For `v1`, the support policy is:
+```julia
+workspace = ForecastFlows.PredictionMarketWorkspace(problem)
 
-- Julia compat floor: `1.10`
-- CI-tested Julia versions: `1.10`, `1.12`
-- supported production boundary: the Julia facade and the JSON worker
+result = ForecastFlows.solve_prediction_market!(
+    workspace,
+    problem;
+    mode=:direct_only,
+    solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+)
+```
+
+The workspace reuses normalized topology and, when possible, solver buffers and
+dual seeds. The input problem must keep the same outcome IDs and market layout,
+including repeated markets that share one `outcome_id`.
 
 ## Worker integration
 
@@ -81,7 +102,7 @@ For Rust or other non-Julia drivers, use the worker:
 julia --project bin/forecastflows-worker.jl
 ```
 
-The worker uses newline-delimited JSON with `protocol_version = 1` and supports:
+The worker uses newline-delimited JSON with `protocol_version = 2` and supports:
 
 - `health`
 - `solve_prediction_market`
@@ -89,8 +110,9 @@ The worker uses newline-delimited JSON with `protocol_version = 1` and supports:
 
 See the [Integration Guide](integration.md) for request and response shapes.
 That guide also documents the preferred `UniV3` liquidity shape and the
-decimal-unit convention for worker inputs. The worker is serial: one request at
-a time per process.
+decimal-unit convention for worker inputs. Missing direct pools are represented
+by omitting those markets from the problem entirely. The worker is stateless and
+processes one request at a time per process.
 
 ## Deep-Trading benchmark sweep
 
@@ -109,6 +131,10 @@ The pinned benchmark snapshot used by the test-local pricing layer is:
 - `eth_usd = 3000`
 - `l1_fee_per_byte_wei = 1_643_855.3414634147`
 - `l1_data_fee_floor_susd = 0`
+
+These constants are benchmark provenance only. They are not stable API defaults.
+Production drivers should supply their own action cost schedule, gas price,
+native-token-to-collateral conversion, and L1 data-fee inputs.
 
 The raw provenance fixture remains `test/fixtures/rebalancer_ab_expected.json`.
 The Julia-local net benchmark regression fixture is
@@ -140,21 +166,18 @@ julia --project bin/release-check.jl
 - The public API returns route plans and certificates, not transaction bundles.
 - The executable benchmark value comes from a no-flash replay layer.
 - Split/merge recovery is specialized to a single `SplitMergeEdge`.
-- `solve_with_fixed_gas!` remains a rough fixed-charge proxy, not the
-  Deep-Trading benchmark comparator.
-- `solve_with_fixed_gas!` cleans near-zero flows before returning and then
-  re-certifies, so inspect `s.certificate` on the mutated solver state rather
-  than caching an earlier certificate snapshot.
+- The benchmark pricing layer is test-local provenance, not part of the stable
+  dependency surface.
 - The Deep-Trading benchmark sweep is opt-in and is not a default CI gate.
-- v1 scope is solver dependency use only; tx construction and chain interaction
-  stay outside this package.
+- Tx construction, chain interaction, gas pricing, and safety policy stay
+  outside this package.
 
 ## Benchmark provenance
 
 The benchmark comparison is apples-to-apples for raw EV under the aligned
 single-tick replay model. The net-EV regression is Julia-local, but it is
-priced against a pinned Deep-Trading-style grouped gas snapshot instead of the
-generic fixed-charge pruning helper.
+priced against a pinned Deep-Trading-style grouped gas snapshot instead of any
+stable package API.
 
 Only the benchmark fixture data is shared with Deep-Trading. The convex solver,
 its split/merge hyperedge, the replay adapter, and the grouped pricing layer in

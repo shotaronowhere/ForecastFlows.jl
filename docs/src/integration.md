@@ -1,51 +1,54 @@
 # Integration Guide
 
-ForecastFlows is now packaged for dependency use in two ways:
+ForecastFlows exposes two supported dependency boundaries:
 
-- in-process Julia via the public prediction-market facade
-- out-of-process via the JSON worker at `bin/forecastflows-worker.jl`
+- an in-process Julia prediction-market facade
+- a stateless NDJSON worker at `bin/forecastflows-worker.jl`
 
-Install the tagged source release with:
+Once `v2.0.0` is tagged, install the source release with:
 
 ```julia
 using Pkg
 
-Pkg.add(url="https://github.com/shotaronowhere/ForecastFlows.jl", rev="v1.0.0")
+Pkg.add(url="https://github.com/shotaronowhere/ForecastFlows.jl", rev="v2.0.0")
 ```
 
-For a Rust driver, the supported production path is the worker. Rust should own:
+For local development in a checkout, use `Pkg.develop(path=pwd())`.
+
+Downstream drivers should own:
 
 - market-state collection
-- gas modeling
-- tx construction and packing
-- chain submission and retries
+- gas and native-token pricing
+- tx grouping, calldata packing, and simulation
+- RPC polling, submission, retries, and kill switches
 
 ForecastFlows should own:
 
-- convex optimization
-- route recovery
+- convex route optimization
+- split/merge-aware route recovery
 - certification metadata
 
-The driver still owns production safety policy around timeouts, reserve
-freshness, gas budgeting, tx simulation, retries, circuit breakers, and
-operator observability.
+## v2 support matrix
 
-## v1 support matrix
+- Julia compat floor: `1.12`
+- CI-tested Julia versions: `1.12`
+- CI-tested platforms: Linux `x64`, macOS `x64`
+- locally release-verified: macOS `arm64`, Julia `1.12`
+- supported dependency interfaces: Julia facade and NDJSON worker
 
-- Julia compat floor: `1.10`
-- CI-tested Julia versions: `1.10`, `1.12`
-- Linux `x64`
-- macOS `x64`
-- supported dependency interfaces: Julia facade and JSON worker
+## Stable Julia facade
 
-## Public facade
+The stable prediction-market facade is:
 
-The facade is the stable Julia API for the one-collateral, one-market-per-outcome
-router:
-
+- `OutcomeSpec`
 - `PredictionMarketProblem`
 - `ConstantProductMarketSpec`
 - `UniV3MarketSpec`
+- `UniV3LiquidityBand`
+- `PredictionMarketTrade`
+- `SplitMergePlan`
+- `SolveCertificateSummary`
+- `PredictionMarketSolveResult`
 - `solve_prediction_market`
 - `compare_prediction_market_families`
 
@@ -55,12 +58,14 @@ Example:
 using ForecastFlows
 
 problem = PredictionMarketProblem(
-    [0.55, 0.45],
-    1.0,
-    [0.0, 0.0],
     [
-        ConstantProductMarketSpec("m1", 1, 40.0, 100.0, 1.0),
-        ConstantProductMarketSpec("m2", 2, 70.0, 100.0, 1.0),
+        OutcomeSpec("YES", 0.55, 0.0),
+        OutcomeSpec("NO", 0.45, 0.0),
+    ],
+    1.0,
+    [
+        ConstantProductMarketSpec("m1", "YES", 40.0, 100.0, 1.0),
+        ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
     ];
     split_bound=5.0,
 )
@@ -68,15 +73,13 @@ problem = PredictionMarketProblem(
 result = solve_prediction_market(
     problem;
     mode=:mixed_enabled,
-    pgtol=1e-8,
-    max_iter=5_000,
-    max_fun=10_000,
     max_doublings=0,
     throw_on_fail=false,
+    solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000),
 )
 ```
 
-Prediction-market solves now fail closed by default. If the solver cannot certify
+Prediction-market solves fail closed by default. If the solver cannot certify
 the route, or if a mixed solve exhausts `max_doublings` while the split/merge
 bound is still near-active, `solve_prediction_market` throws. Pass
 `throw_on_fail=false` only when you explicitly want to inspect an uncertified
@@ -84,16 +87,40 @@ result.
 
 Returned data is deliberately abstract:
 
-- signed direct AMM trades keyed by `market_id`
+- signed direct AMM trades keyed by `market_id` and `outcome_id`
 - aggregate mint and merge amounts
 - initial and final EV
-- final cash and holdings
+- final collateral and holdings
 - certification summary
 
-It does not include tx grouping, gas pricing, calldata packing, or chain I/O.
+It does not include gas pricing, tx grouping, calldata packing, or chain I/O.
 
-Worker numeric inputs must be decimal-scaled token units. Do not send raw wei
-or other base-unit integers.
+## Repeated solves
+
+For hot loops, ForecastFlows exposes a public qualified workspace API:
+
+- `ForecastFlows.PredictionMarketWorkspace`
+- `ForecastFlows.solve_prediction_market!`
+
+Example:
+
+```julia
+workspace = ForecastFlows.PredictionMarketWorkspace(problem)
+
+result = ForecastFlows.solve_prediction_market!(
+    workspace,
+    problem;
+    mode=:direct_only,
+    solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+)
+```
+
+Workspace reuse requires the same topology:
+
+- the same `outcome_id` values in the same order
+- the same `market_id` values in the same order
+- the same market types
+- the same `UniV3` band counts
 
 ## Liquidity shape
 
@@ -112,7 +139,7 @@ bands = [
     UniV3LiquidityBand(0.25, 10.0),
 ]
 
-spec = UniV3MarketSpec("u1", 1, 0.5, bands, 0.997)
+spec = UniV3MarketSpec("u1", "YES", 0.5, bands, 0.997)
 ```
 
 Each band is:
@@ -120,35 +147,79 @@ Each band is:
 - `lower_price`: the outcome price at the top of the band
 - `liquidity_L`: the standard Uniswap-style liquidity parameter `L`
 
-Bands may be supplied in any order; ForecastFlows normalizes them to the
-descending order required by the low-level edge.
+`liquidity_L = 0` is allowed only for one optional final band that marks a hard
+exhausted-liquidity boundary while keeping the request on the stable public
+`bands` representation.
 
-The legacy low-level form with `lower_ticks` and `liquidity` is still accepted,
-but it is easier to misuse:
+`PredictionMarketProblem` may omit direct markets for some outcomes, and it may
+include multiple direct markets with the same `outcome_id`. Omitted markets mean
+"no direct venue"; there is no placeholder market type for empty liquidity.
+Concentrated-liquidity exhaustion is handled inside the `UniV3` edge model. Once
+the relevant side of a band is exhausted, that edge simply contributes no
+further flow.
 
-- `lower_ticks` are descending prices, not integer tick indices
-- `liquidity` is the internal reserve-product weight `L^2`, not `L`
+If `markets=[]`, `solve_prediction_market(problem; mode=:direct_only)` returns a
+trivial no-trade result. `mode=:mixed_enabled` remains valid because the split/
+merge hyperedge still spans the declared outcomes.
 
 ## Worker protocol
 
 The worker speaks newline-delimited JSON on stdin/stdout.
 
-- `protocol_version = 1`
+- `protocol_version = 2`
 - commands: `health`, `solve_prediction_market`, `compare_prediction_market_families`
-- `outcome_index` is 1-based
-- numeric inputs are decimal token units
-- execution model: serial, one request at a time per worker process
+- `outcome_id` is the stable outcome reference
+- numeric inputs are decimal collateral/outcome units
+- execution model: stateless NDJSON, one request at a time per worker process
 
 Example request:
 
 ```json
-{"protocol_version":1,"request_id":"solve-1","command":"solve_prediction_market","mode":"mixed_enabled","problem":{"outcome_values":[0.55,0.45],"initial_cash":1.0,"initial_holdings":[0.0,0.0],"markets":[{"type":"constant_product","market_id":"m1","outcome_index":1,"collateral_reserve":40.0,"outcome_reserve":100.0,"fee_multiplier":1.0},{"type":"constant_product","market_id":"m2","outcome_index":2,"collateral_reserve":70.0,"outcome_reserve":100.0,"fee_multiplier":1.0}],"split_bound":5.0},"solve_options":{"throw_on_fail":false,"pgtol":1e-8,"max_iter":5000,"max_fun":10000,"max_doublings":0}}
+{
+  "protocol_version": 2,
+  "request_id": "solve-1",
+  "command": "solve_prediction_market",
+  "mode": "mixed_enabled",
+  "problem": {
+    "outcomes": [
+      {"outcome_id": "YES", "fair_value": 0.55, "initial_holding": 0.0},
+      {"outcome_id": "NO", "fair_value": 0.45, "initial_holding": 0.0}
+    ],
+    "collateral_balance": 1.0,
+    "markets": [
+      {"type": "constant_product", "market_id": "m1", "outcome_id": "YES", "collateral_reserve": 40.0, "outcome_reserve": 100.0, "fee_multiplier": 1.0},
+      {"type": "constant_product", "market_id": "m2", "outcome_id": "NO", "collateral_reserve": 70.0, "outcome_reserve": 100.0, "fee_multiplier": 1.0}
+    ],
+    "split_bound": 5.0
+  },
+  "solve_options": {
+    "throw_on_fail": false,
+    "pgtol": 1e-8,
+    "max_iter": 5000,
+    "max_fun": 10000,
+    "max_doublings": 0
+  }
+}
 ```
 
 Example success response:
 
 ```json
-{"protocol_version":1,"request_id":"solve-1","ok":true,"command":"solve_prediction_market","result":{"status":"uncertified","mode":"mixed_enabled","trades":[{"market_id":"m1","outcome_index":1,"collateral_delta":0.6666661145101713,"outcome_delta":-1.6949138266566024},{"market_id":"m2","outcome_index":2,"collateral_delta":3.3333333236415967,"outcome_delta":-4.999999984735524}],"split_merge":{"mint":5.0,"merge":0.0}}}
+{
+  "protocol_version": 2,
+  "request_id": "solve-1",
+  "ok": true,
+  "command": "solve_prediction_market",
+  "result": {
+    "status": "uncertified",
+    "mode": "mixed_enabled",
+    "trades": [
+      {"market_id": "m1", "outcome_id": "YES", "collateral_delta": 0.6666661145101713, "outcome_delta": -1.6949138266566024},
+      {"market_id": "m2", "outcome_id": "NO", "collateral_delta": 3.3333333236415967, "outcome_delta": -4.999999984735524}
+    ],
+    "split_merge": {"mint": 5.0, "merge": 0.0}
+  }
+}
 ```
 
 Worker solves also fail closed by default. To inspect an uncertified result over
@@ -159,12 +230,17 @@ JSON.
 Example error response:
 
 ```json
-{"protocol_version":1,"request_id":"bad-1","ok":false,"error":{"code":"invalid_request","message":"mode must be :direct_only or :mixed_enabled"}}
+{"protocol_version":2,"request_id":"bad-1","ok":false,"error":{"code":"invalid_request","message":"unsupported command: wat"}}
 ```
+
+Protocol v1 payloads are rejected intentionally. Use the v2 `outcomes` /
+`collateral_balance` / `outcome_id` shape. Old `outcome_values` /
+`initial_cash` / `outcome_index` payloads must be updated by the caller; they
+are not parsed by the worker.
 
 ## Process model
 
-Recommended Rust-side lifecycle:
+Recommended driver-side lifecycle:
 
 1. Start one long-lived Julia worker per process or per strategy shard.
 2. Send `health` before the first solve request.
@@ -173,10 +249,8 @@ Recommended Rust-side lifecycle:
 5. Reuse the worker for repeated solve requests.
 6. Restart the worker if it exits, returns malformed JSON, or returns a response that fails local schema validation.
 
-The worker is deterministic for fixed inputs and solver options.
-
-For parallelism, run multiple worker processes. The worker itself does not expose
-concurrent request handling.
+For parallelism, run multiple worker processes. The worker itself does not
+expose concurrent request handling.
 
 ## Cold-start reduction
 
@@ -196,7 +270,7 @@ extension is `.so` on Linux and `.dylib` on macOS.
 
 ## Release gate
 
-The reproducible manual release gate for v1 is:
+The reproducible manual release gate for v2 is:
 
 ```bash
 julia --project bin/release-check.jl
