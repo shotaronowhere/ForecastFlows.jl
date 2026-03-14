@@ -4,7 +4,8 @@ using Libdl
 const pm_tol = 1e-6
 const facade_solver_options = (; pgtol=1e-8, max_iter=5_000, max_fun=10_000)
 const dt_focus_case_id = "heterogeneous_ninety_eight_outcome_l1_like_case"
-const benchmark_opt_in_env = "FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK"
+const deep_trading_compat_opt_in_env = "FORECASTFLOWS_RUN_DEEPTRADING_COMPAT"
+const legacy_benchmark_opt_in_env = "FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK"
 const replay_atol = 1e-9
 const dt_cases_fixture = joinpath(@__DIR__, "fixtures", "rebalancer_ab_cases.json")
 const dt_expected_fixture = joinpath(@__DIR__, "fixtures", "rebalancer_ab_expected.json")
@@ -52,6 +53,27 @@ function deep_trading_net_expected(case_id::String)
         Float64(row.best_net_ev),
     )
 end
+
+function deep_trading_compatibility_target_net_ev(case_id::String)
+    return if case_id == "heterogeneous_ninety_eight_outcome_l1_like_case"
+        150.3651857457622
+    elseif case_id == "legacy_holdings_direct_only_case"
+        38.862889881900635
+    elseif case_id == "mixed_route_favorable_synthetic_case"
+        100.10782498550209
+    elseif case_id == "ninety_eight_outcome_multitick_direct_only"
+        98.10611206056846
+    elseif case_id == "small_bundle_mixed_case"
+        100.14776321384267
+    elseif case_id == "two_pool_single_tick_direct_only"
+        100.10232463180911
+    else
+        error("missing waterfall target for $case_id")
+    end
+end
+
+deep_trading_compat_opted_in() =
+    get(ENV, deep_trading_compat_opt_in_env, get(ENV, legacy_benchmark_opt_in_env, "0")) == "1"
 
 struct SingleTickMarketSpec
     current_price::Float64
@@ -532,6 +554,14 @@ end
 price_replay_report(report::ReplayReport, snapshot=dt_benchmark_snapshot) =
     price_execution_groups(replay_execution_groups(report.actions), snapshot)
 
+function deep_trading_compatibility_gas_model(problem::PredictionMarketProblem)
+    direct_buy_cost = price_execution_groups([replay_execution_group(:direct_buy, 1, 0, 1.0, 0.0)]).total_fee
+    direct_sell_cost = price_execution_groups([replay_execution_group(:direct_sell, 0, 1, 0.0, 1.0)]).total_fee
+    split_merge_cost = price_execution_groups([replay_execution_group(:direct_merge, 0, 0, 0.0, 1.0)]).total_fee
+    market_cost = max(direct_buy_cost, direct_sell_cost)
+    return PredictionMarketFixedGasModel(fill(market_cost, length(problem.markets)), split_merge_cost)
+end
+
 function benchmark_best_family(direct_net_ev::Float64, mixed_net_ev::Float64; atol::Float64=1e-12)
     return mixed_net_ev > direct_net_ev + atol ? "mixed" : "direct"
 end
@@ -670,6 +700,77 @@ function build_case_from_deep_trading(case_id::String)
     )
 end
 
+function public_problem_from_benchmark(benchmark::DeepTradingBenchmarkCase)
+    outcomes = OutcomeSpec[
+        OutcomeSpec(string(i), benchmark.predictions[i], benchmark.holdings0[i])
+        for i in eachindex(benchmark.predictions)
+    ]
+    markets = UniV3MarketSpec[
+        UniV3MarketSpec(
+            "m$(i)",
+            string(i),
+            market.current_price,
+            [
+                UniV3LiquidityBand(market.buy_limit_price, market.liquidity_raw),
+                UniV3LiquidityBand(market.sell_limit_price, 0.0),
+            ],
+            market.γ,
+        )
+        for (i, market) in enumerate(benchmark.markets)
+    ]
+    return PredictionMarketProblem(
+        outcomes,
+        benchmark.cash0,
+        markets;
+        split_bound=benchmark.initial_split_bound,
+    )
+end
+
+function route_desiderata_from_public_result(
+    benchmark::DeepTradingBenchmarkCase,
+    result::PredictionMarketSolveResult;
+    atol::Float64=replay_atol,
+)
+    n_outcomes = length(benchmark.predictions)
+    direct_buys = zeros(n_outcomes)
+    direct_sells = zeros(n_outcomes)
+    outcome_index_by_id = Dict(string(i) => i for i in 1:n_outcomes)
+
+    for trade in result.trades
+        idx = get(outcome_index_by_id, trade.outcome_id, 0)
+        idx == 0 && error("unexpected outcome id $(trade.outcome_id) in public result")
+        if trade.outcome_delta > atol
+            direct_buys[idx] += trade.outcome_delta
+        elseif trade.outcome_delta < -atol
+            direct_sells[idx] += -trade.outcome_delta
+        end
+    end
+
+    return RouteDesiderata(
+        direct_buys,
+        direct_sells,
+        result.split_merge.mint,
+        result.split_merge.merge,
+        result.final_ev,
+    )
+end
+
+function replay_public_result(
+    benchmark::DeepTradingBenchmarkCase,
+    result::PredictionMarketSolveResult;
+    atol::Float64=replay_atol,
+)
+    route = route_desiderata_from_public_result(benchmark, result; atol=atol)
+    replay = replay_desired_route(benchmark, route; atol=atol)
+    fees = price_replay_report(replay)
+    return (
+        route=route,
+        replay=replay,
+        fees=fees,
+        net_ev=replay.final_raw_ev - fees.total_fee,
+    )
+end
+
 function toy_benchmark_case(predictions, current_prices, holdings0, cash0, markets; case_id="toy")
     return assemble_benchmark_case(
         case_id,
@@ -713,7 +814,7 @@ function solve_prediction_market_low_level(problem::PredictionMarketProblem; mod
         if spec isa ConstantProductMarketSpec
             push!(edges, ProductTwoCoin([spec.collateral_reserve, spec.outcome_reserve], spec.fee_multiplier, [1, outcome_index_by_id[spec.outcome_id] + 1]))
         elseif spec isa UniV3MarketSpec
-            push!(edges, UniV3(spec.current_price, getfield(spec, :lower_ticks), getfield(spec, :liquidity_k), spec.fee_multiplier, [1, outcome_index_by_id[spec.outcome_id] + 1]))
+            push!(edges, ForecastFlows._build_prediction_market_edge(spec, outcome_index_by_id[spec.outcome_id]))
         else
             error("unsupported market spec type $(typeof(spec))")
         end
@@ -1514,9 +1615,81 @@ end
         end
     end
 
+    @testset "public UniV3 single-tick parity" begin
+        for case_id in ("two_pool_single_tick_direct_only", "small_bundle_mixed_case")
+            benchmark = build_case_from_deep_trading(case_id)
+            problem = public_problem_from_benchmark(benchmark)
+            for (i, market) in enumerate(benchmark.markets)
+                edge = ForecastFlows._build_prediction_market_edge(problem.markets[i], i)
+                x = zeros(2)
+                canonical_pool = ReplaySingleTickPool(
+                    market.current_price,
+                    market.buy_limit_price,
+                    market.sell_limit_price,
+                    market.liquidity_raw,
+                    market.γ,
+                )
+                for frac in (0.25, 0.5, 0.9)
+                    buy_target = canonical_pool.current_price + frac * (canonical_pool.buy_limit_price - canonical_pool.current_price)
+                    expected_buy = buy_to_price(canonical_pool, buy_target)
+                    ForecastFlows.find_arb!(x, edge, [1.0, buy_target / canonical_pool.γ])
+                    @test x[1] ≈ -expected_buy[2] atol=1e-10
+                    @test x[2] ≈ expected_buy[1] atol=1e-10
+
+                    sell_target = canonical_pool.current_price - frac * (canonical_pool.current_price - canonical_pool.sell_limit_price)
+                    expected_sell = sell_to_price(canonical_pool, sell_target)
+                    ForecastFlows.find_arb!(x, edge, [1.0, canonical_pool.γ * sell_target])
+                    @test x[1] ≈ expected_sell[2] atol=1e-10
+                    @test x[2] ≈ -expected_sell[1] atol=1e-10
+                end
+            end
+        end
+    end
+
+    @testset "public UniV3 multi-band parity" begin
+        public_spec = UniV3MarketSpec(
+            "u_multi",
+            "YES",
+            0.72,
+            [
+                UniV3LiquidityBand(1.0, 5.0),
+                UniV3LiquidityBand(0.6, 15.0),
+                UniV3LiquidityBand(0.3, 10.0),
+                UniV3LiquidityBand(0.1, 0.0),
+            ],
+            0.999,
+        )
+        public_edge = ForecastFlows._build_prediction_market_edge(public_spec, 1)
+        internal_edge = UniV3(
+            inv(0.72),
+            [inv(0.1), inv(0.3), inv(0.6), inv(1.0)],
+            [100.0, 225.0, 25.0, 0.0],
+            0.999,
+            [1, 2],
+        )
+
+        @test public_edge.lower_ticks == internal_edge.lower_ticks
+        @test public_edge.liquidity == internal_edge.liquidity
+
+        x_public = zeros(2)
+        x_internal = zeros(2)
+        for target in (0.81, 0.92)
+            ForecastFlows.find_arb!(x_public, public_edge, [1.0, target / public_spec.fee_multiplier])
+            ForecastFlows.find_arb!(x_internal, internal_edge, [1.0, target / public_spec.fee_multiplier])
+            @test x_public ≈ x_internal atol=1e-10
+        end
+
+        for target in (0.58, 0.36)
+            ForecastFlows.find_arb!(x_public, public_edge, [1.0, public_spec.fee_multiplier * target])
+            ForecastFlows.find_arb!(x_internal, internal_edge, [1.0, public_spec.fee_multiplier * target])
+            @test x_public ≈ x_internal atol=1e-10
+        end
+    end
+
     @testset "public prediction-market facade" begin
         expected_public_interfaces = [
             "PredictionMarketWorkspace",
+            "PredictionMarketFixedGasModel",
             "solve_prediction_market!",
             "PREDICTION_MARKET_PROTOCOL_VERSION",
             "HealthRequest",
@@ -1615,6 +1788,11 @@ end
             @test length(one_market_problem.markets) == 1
             @test length(multi_pool_problem.markets) == 2
             @test all(spec -> spec.outcome_id == "YES", multi_pool_problem.markets)
+            @test_throws ArgumentError solve_prediction_market(
+                zero_market_problem;
+                mode=:direct_only,
+                gas_model=PredictionMarketFixedGasModel([0.1], 0.2),
+            )
         end
 
         @testset "outcome_id and JSON roundtrip" begin
@@ -1652,6 +1830,21 @@ end
             @test !hasproperty(encoded_result.trades[1], :outcome_index)
             @test !hasproperty(encoded_result, :initial_cash)
             @test !hasproperty(encoded_result, :final_cash)
+
+            gas_model = PredictionMarketFixedGasModel([0.01, 0.02], 0.03)
+            encoded_gas_model = JSON3.read(JSON3.write(gas_model))
+            @test Float64.(collect(encoded_gas_model.market_action_costs)) == [0.01, 0.02]
+            @test encoded_gas_model.split_merge_action_cost == 0.03
+
+            gas_result = solve_prediction_market(
+                problem;
+                mode=:direct_only,
+                gas_model=gas_model,
+                solver_options=facade_solver_options,
+            )
+            encoded_gas_result = JSON3.read(JSON3.write(gas_result))
+            @test encoded_gas_result.estimated_execution_cost >= 0.0
+            @test encoded_gas_result.net_ev <= encoded_gas_result.final_ev + 1e-12
         end
 
         @testset "facade parity" begin
@@ -2057,6 +2250,22 @@ end
             )
         end
 
+        @testset "public UniV3 outcome-price direct buy regression" begin
+            buy_problem = PredictionMarketProblem(
+                [OutcomeSpec("YES", 0.30, 0.0)],
+                1.0,
+                [UniV3MarketSpec("u_buy", "YES", 0.15, [UniV3LiquidityBand(1.0, 1.0), UniV3LiquidityBand(0.0001, 0.0)], 0.9999)],
+            )
+            buy_result = solve_prediction_market(buy_problem; mode=:direct_only, throw_on_fail=false, solver_options=facade_solver_options)
+            @test buy_result.status == "certified"
+            @test length(buy_result.trades) == 1
+            buy_trade = only(buy_result.trades)
+            @test buy_trade.market_id == "u_buy"
+            @test buy_trade.collateral_delta < 0.0
+            @test buy_trade.outcome_delta > 0.0
+            @test buy_result.final_ev > buy_result.initial_ev + 1e-6
+        end
+
         @testset "UniV3 boundary exhaustion" begin
             boundary_problem = PredictionMarketProblem(
                 [OutcomeSpec("YES", 1.5, 0.0)],
@@ -2104,6 +2313,64 @@ end
             @test comparison.direct_only.final_collateral ≈ direct_result.final_collateral atol=1e-8
             @test comparison.mixed_enabled.final_ev ≈ mixed_result.final_ev atol=1e-8
             @test comparison.mixed_enabled.split_merge.mint ≈ mixed_result.split_merge.mint atol=1e-8
+
+            gas_model = deep_trading_compatibility_gas_model(comparison_problem)
+            direct_gas = solve_prediction_market(
+                comparison_problem;
+                mode=:direct_only,
+                gas_model=gas_model,
+                max_doublings=0,
+                solver_options=facade_solver_options,
+            )
+            mixed_gas = solve_prediction_market(
+                comparison_problem;
+                mode=:mixed_enabled,
+                gas_model=gas_model,
+                max_doublings=0,
+                throw_on_fail=false,
+                solver_options=facade_solver_options,
+            )
+            comparison_gas = compare_prediction_market_families(
+                comparison_problem;
+                gas_model=gas_model,
+                max_doublings=0,
+                throw_on_fail=false,
+                solver_options=facade_solver_options,
+            )
+
+            @test comparison_gas.direct_only.final_ev ≈ direct_gas.final_ev atol=1e-8
+            @test comparison_gas.direct_only.net_ev ≈ direct_gas.net_ev atol=1e-8
+            @test comparison_gas.mixed_enabled.final_ev ≈ mixed_gas.final_ev atol=1e-8
+            @test comparison_gas.mixed_enabled.net_ev ≈ mixed_gas.net_ev atol=1e-8
+        end
+
+        @testset "public deep-trading facade spot checks" begin
+            for (case_id, expected_family) in [
+                ("two_pool_single_tick_direct_only", "direct"),
+                ("small_bundle_mixed_case", "mixed"),
+            ]
+                benchmark = build_case_from_deep_trading(case_id)
+                expected = deep_trading_net_expected(case_id)
+                problem = public_problem_from_benchmark(benchmark)
+
+                comparison = compare_prediction_market_families(
+                    problem;
+                    max_doublings=6,
+                    throw_on_fail=false,
+                    solver_options=(; pgtol=1e-6, max_iter=10_000, max_fun=20_000),
+                )
+                direct_public = replay_public_result(benchmark, comparison.direct_only)
+                mixed_public = replay_public_result(benchmark, comparison.mixed_enabled)
+
+                @test comparison.direct_only.status == "certified"
+                @test comparison.mixed_enabled.status == "certified"
+                @test direct_public.replay.final_raw_ev <= comparison.direct_only.final_ev + 1e-6
+                @test mixed_public.replay.final_raw_ev <= comparison.mixed_enabled.final_ev + 1e-6
+                @test direct_public.net_ev ≈ expected.direct_net_ev atol=1e-9
+                @test mixed_public.net_ev ≈ expected.mixed_net_ev atol=1e-9
+                @test benchmark_best_family(direct_public.net_ev, mixed_public.net_ev) == expected_family
+                @test expected.best_family == expected_family
+            end
         end
 
         @testset "workspace hot loop" begin
@@ -2206,6 +2473,7 @@ end
                 ];
                 split_bound=5.0,
             )
+            worker_gas_model = PredictionMarketFixedGasModel([0.01, 0.02], 0.03)
             problem_json = JSON3.write(worker_problem)
             roundtrip_problem = JSON3.read(problem_json)
             @test roundtrip_problem.markets[1].type == "constant_product"
@@ -2234,6 +2502,30 @@ end
                 command="health",
             )))
             @test parsed_health isa ForecastFlows.HealthRequest
+
+            parsed_gas_solve = ForecastFlows.parse_protocol_request(JSON3.write((
+                protocol_version=2,
+                request_id="gas-parse",
+                command="solve_prediction_market",
+                mode="direct_only",
+                problem=worker_problem,
+                gas_model=worker_gas_model,
+            )))
+            @test parsed_gas_solve isa ForecastFlows.SolveRequest
+            @test parsed_gas_solve.gas_model.market_action_costs == [0.01, 0.02]
+            @test parsed_gas_solve.gas_model.split_merge_action_cost == 0.03
+
+            unsafe_gas_units_response = JSON3.read(ForecastFlows.handle_protocol_json(JSON3.write((
+                protocol_version=2,
+                request_id="unsafe-gas-units",
+                command="solve_prediction_market",
+                mode="direct_only",
+                problem=worker_problem,
+                gas_model=(market_action_costs=["9007199254740992", 0.02], split_merge_action_cost=0.03),
+            ))))
+            @test !unsafe_gas_units_response.ok
+            @test unsafe_gas_units_response.error.code == "invalid_request"
+            @test occursin("decimal-scaled token units", String(unsafe_gas_units_response.error.message))
 
             rendered_health = JSON3.read(ForecastFlows.handle_protocol_json(JSON3.write((
                 protocol_version=2,
@@ -2382,6 +2674,15 @@ end
                 ),
                 (
                     protocol_version=2,
+                    request_id="gas-solve",
+                    command="solve_prediction_market",
+                    mode="direct_only",
+                    problem=worker_problem,
+                    gas_model=worker_gas_model,
+                    solve_options=(pgtol=1e-8, max_iter=5_000, max_fun=10_000),
+                ),
+                (
+                    protocol_version=2,
                     request_id="wei",
                     command="solve_prediction_market",
                     mode="direct_only",
@@ -2486,6 +2787,14 @@ end
                 ),
                 (
                     protocol_version=2,
+                    request_id="bad-gas-model",
+                    command="solve_prediction_market",
+                    mode="direct_only",
+                    problem=worker_problem,
+                    gas_model=(market_action_costs=[0.01], split_merge_action_cost=0.03),
+                ),
+                (
+                    protocol_version=2,
                     request_id="missing-problem",
                     command="solve_prediction_market",
                 ),
@@ -2513,7 +2822,7 @@ end
             response_lines = filter(!isempty, split(chomp(output), '\n'))
             responses = JSON3.read.(response_lines)
 
-            @test length(responses) == 18
+            @test length(responses) == 20
             @test responses[1].ok
             @test responses[1].request_id == "health"
             @test responses[1].result.status == "ok"
@@ -2550,65 +2859,76 @@ end
             @test isnothing(responses[6].result.certificate.primal_value)
             @test isnothing(responses[6].result.certificate.duality_gap)
 
-            @test !responses[7].ok
-            @test responses[7].request_id == "wei"
-            @test responses[7].error.code == "invalid_request"
-            @test occursin("decimal-scaled token units", String(responses[7].error.message))
+            @test responses[7].ok
+            @test responses[7].request_id == "gas-solve"
+            @test responses[7].result.mode == "direct_only"
+            @test responses[7].result.estimated_execution_cost >= 0.0
+            @test responses[7].result.net_ev <= responses[7].result.final_ev + 1e-12
 
             @test !responses[8].ok
-            @test responses[8].request_id == "bool"
+            @test responses[8].request_id == "wei"
             @test responses[8].error.code == "invalid_request"
-            @test occursin("numeric, not boolean", String(responses[8].error.message))
+            @test occursin("decimal-scaled token units", String(responses[8].error.message))
 
             @test !responses[9].ok
-            @test responses[9].request_id == "invalid"
+            @test responses[9].request_id == "bool"
             @test responses[9].error.code == "invalid_request"
-            @test occursin("mode must be :direct_only or :mixed_enabled", String(responses[9].error.message))
+            @test occursin("numeric, not boolean", String(responses[9].error.message))
 
             @test !responses[10].ok
-            @test responses[10].request_id == "missing-market-id"
+            @test responses[10].request_id == "invalid"
             @test responses[10].error.code == "invalid_request"
-            @test occursin("problem.markets[1].market_id is required", String(responses[10].error.message))
+            @test occursin("mode must be :direct_only or :mixed_enabled", String(responses[10].error.message))
 
             @test !responses[11].ok
-            @test responses[11].request_id == "missing-band-field"
+            @test responses[11].request_id == "missing-market-id"
             @test responses[11].error.code == "invalid_request"
-            @test occursin("problem.markets[1].bands[1].liquidity_L is required", String(responses[11].error.message))
+            @test occursin("problem.markets[1].market_id is required", String(responses[11].error.message))
 
             @test !responses[12].ok
-            @test responses[12].request_id == "bad-max-iter"
+            @test responses[12].request_id == "missing-band-field"
             @test responses[12].error.code == "invalid_request"
-            @test occursin("solve_options.max_iter must be parseable as Float64", String(responses[12].error.message))
+            @test occursin("problem.markets[1].bands[1].liquidity_L is required", String(responses[12].error.message))
 
             @test !responses[13].ok
-            @test responses[13].request_id == "bad-certify"
+            @test responses[13].request_id == "bad-max-iter"
             @test responses[13].error.code == "invalid_request"
-            @test occursin("solve_options.certify must be boolean", String(responses[13].error.message))
+            @test occursin("solve_options.max_iter must be parseable as Float64", String(responses[13].error.message))
 
             @test !responses[14].ok
-            @test responses[14].request_id == "bad-number"
+            @test responses[14].request_id == "bad-certify"
             @test responses[14].error.code == "invalid_request"
-            @test occursin("problem.collateral_balance must be parseable as Float64", String(responses[14].error.message))
+            @test occursin("solve_options.certify must be boolean", String(responses[14].error.message))
 
             @test !responses[15].ok
-            @test responses[15].request_id == "missing-problem"
+            @test responses[15].request_id == "bad-number"
             @test responses[15].error.code == "invalid_request"
-            @test occursin("problem is required", String(responses[15].error.message))
+            @test occursin("problem.collateral_balance must be parseable as Float64", String(responses[15].error.message))
 
             @test !responses[16].ok
-            @test responses[16].request_id == "bad-version"
+            @test responses[16].request_id == "bad-gas-model"
             @test responses[16].error.code == "invalid_request"
-            @test occursin("unsupported protocol_version 3", String(responses[16].error.message))
+            @test occursin("one cost per problem market", String(responses[16].error.message))
 
             @test !responses[17].ok
-            @test responses[17].request_id == "bad-command"
+            @test responses[17].request_id == "missing-problem"
             @test responses[17].error.code == "invalid_request"
-            @test occursin("unsupported command: wat", String(responses[17].error.message))
+            @test occursin("problem is required", String(responses[17].error.message))
 
             @test !responses[18].ok
-            @test responses[18].request_id == "solve-failed"
-            @test responses[18].error.code == "solve_failed"
-            @test occursin("failed certification", String(responses[18].error.message))
+            @test responses[18].request_id == "bad-version"
+            @test responses[18].error.code == "invalid_request"
+            @test occursin("unsupported protocol_version 3", String(responses[18].error.message))
+
+            @test !responses[19].ok
+            @test responses[19].request_id == "bad-command"
+            @test responses[19].error.code == "invalid_request"
+            @test occursin("unsupported command: wat", String(responses[19].error.message))
+
+            @test !responses[20].ok
+            @test responses[20].request_id == "solve-failed"
+            @test responses[20].error.code == "solve_failed"
+            @test occursin("failed certification", String(responses[20].error.message))
 
             malformed_response = JSON3.read(String(read(pipeline(IOBuffer("{\n"), cmd), String)))
             @test !malformed_response.ok
@@ -2627,75 +2947,4 @@ end
         end
     end
 
-    if get(ENV, benchmark_opt_in_env, "0") == "1"
-        @testset "deep trading net-ev benchmark sweep" begin
-            benchmark_pgtol = 1e-6
-            benchmark_max_iter = 10_000
-            benchmark_max_fun = 20_000
-            summary_rows = NamedTuple[]
-
-            for case_id in dt_case_ids
-                benchmark = build_case_from_deep_trading(case_id)
-                raw_expected = deep_trading_raw_expected(case_id)
-                net_expected = deep_trading_net_expected(case_id)
-                result = solve_benchmark_case(
-                    benchmark;
-                    method=:auto,
-                    pgtol=benchmark_pgtol,
-                    max_iter=benchmark_max_iter,
-                    max_fun=benchmark_max_fun,
-                )
-
-                @test result.direct_certified
-                @test result.mixed_certified
-                @test result.direct_replay.final_cash >= -1e-8
-                @test result.mixed_replay.final_cash >= -1e-8
-                @test all(result.direct_replay.final_holdings .>= -1e-8)
-                @test all(result.mixed_replay.final_holdings .>= -1e-8)
-                @test isfinite(result.direct_replay.final_raw_ev)
-                @test isfinite(result.mixed_replay.final_raw_ev)
-                @test 0.0 <= result.direct_replay.fill_fraction <= 1.0
-                @test 0.0 <= result.mixed_replay.fill_fraction <= 1.0
-                @test result.direct_replay.final_raw_ev <= result.direct_raw_upper_ev + 1e-6
-                @test result.mixed_replay.final_raw_ev <= result.mixed_raw_upper_ev + 1e-6
-
-                @test result.direct_replay.final_raw_ev ≥ raw_expected.direct_ev - raw_fixture_atol(case_id, :direct)
-                @test result.mixed_replay.final_raw_ev ≥ raw_expected.mixed_ev - raw_fixture_atol(case_id, :mixed)
-                @test result.direct_net_ev ≈ net_expected.direct_net_ev atol=1e-9
-                @test result.mixed_net_ev ≈ net_expected.mixed_net_ev atol=1e-9
-                @test result.best_family == net_expected.best_family
-                @test result.best_net_ev ≈ net_expected.best_net_ev atol=1e-9
-
-                push!(summary_rows, (
-                    case_id=case_id,
-                    ev_before=benchmark.initial_ev,
-                    direct_raw_upper_ev=result.direct_raw_upper_ev,
-                    direct_replayed_raw_ev=result.direct_replay.final_raw_ev,
-                    direct_net_ev=result.direct_net_ev,
-                    mixed_raw_upper_ev=result.mixed_raw_upper_ev,
-                    mixed_replayed_raw_ev=result.mixed_replay.final_raw_ev,
-                    mixed_net_ev=result.mixed_net_ev,
-                    best_family=result.best_family,
-                    best_net_ev=result.best_net_ev,
-                    gap_to_dt_direct=result.direct_replay.final_raw_ev - raw_expected.direct_ev,
-                    gap_to_dt_mixed=result.mixed_replay.final_raw_ev - raw_expected.mixed_ev,
-                    direct_action_count=active_edge_count(result.direct.solver),
-                    mixed_action_count=active_edge_count(result.mixed.solver),
-                    direct_group_count=result.direct_fees.group_count,
-                    mixed_group_count=result.mixed_fees.group_count,
-                    direct_tx_count=result.direct_fees.tx_count,
-                    mixed_tx_count=result.mixed_fees.tx_count,
-                    direct_fee=result.direct_fees.total_fee,
-                    mixed_fee=result.mixed_fees.total_fee,
-                    direct_calldata_bytes=result.direct_fees.total_calldata_bytes,
-                    mixed_calldata_bytes=result.mixed_fees.total_calldata_bytes,
-                    split_flow=result.mixed.split_flow,
-                    split_bound=result.mixed.split_bound,
-                ))
-            end
-
-            @test any(row -> row.case_id == dt_focus_case_id && row.best_family == "mixed", summary_rows)
-            @info "deep-trading net-ev benchmark sweep" rows=summary_rows
-        end
-    end
 end

@@ -36,6 +36,10 @@ end
     include("prediction_markets.jl")
 end
 
+@testset "deep_trading compatibility" begin
+    include("deep_trading_compat.jl")
+end
+
 @testset "api boundary" begin
     include("api_boundary.jl")
 end

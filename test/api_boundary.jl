@@ -5,6 +5,7 @@
     @test exported == sort!([
         "ConstantProductMarketSpec",
         "OutcomeSpec",
+        "PredictionMarketFixedGasModel",
         "PredictionMarketProblem",
         "PredictionMarketSolveResult",
         "PredictionMarketTrade",
@@ -25,6 +26,7 @@
         "HealthResponse",
         "OutcomeSpec",
         "PREDICTION_MARKET_PROTOCOL_VERSION",
+        "PredictionMarketFixedGasModel",
         "PredictionMarketProblem",
         "PredictionMarketSolveResult",
         "PredictionMarketTrade",

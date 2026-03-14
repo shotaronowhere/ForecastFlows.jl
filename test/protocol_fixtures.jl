@@ -182,6 +182,7 @@ function assert_health_response_schema(response)
     @test result.stable_interfaces == ["prediction_market_facade", "ndjson_protocol"]
     @test result.public_interfaces == [
         "PredictionMarketWorkspace",
+        "PredictionMarketFixedGasModel",
         "solve_prediction_market!",
         "PREDICTION_MARKET_PROTOCOL_VERSION",
         "HealthRequest",

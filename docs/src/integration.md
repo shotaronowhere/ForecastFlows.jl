@@ -95,6 +95,12 @@ Returned data is deliberately abstract:
 
 It does not include gas pricing, tx grouping, calldata packing, or chain I/O.
 
+If a downstream wants the public facade to penalize route activation, it may
+pass `PredictionMarketFixedGasModel` at solve time. That model is intentionally
+coarse: one cost per direct market edge plus one cost for the split/merge edge.
+It should be treated as a generic sparsity hint, not an exact on-chain
+execution-cost model.
+
 ## Repeated solves
 
 For hot loops, ForecastFlows exposes a public qualified workspace API:
@@ -121,6 +127,10 @@ Workspace reuse requires the same topology:
 - the same `market_id` values in the same order
 - the same market types
 - the same `UniV3` band counts
+
+`compare_prediction_market_families` already reuses one
+`PredictionMarketWorkspace(problem)` internally, so standalone branch solves and
+the compare entrypoint stay aligned on the same public workspace shape.
 
 ## Liquidity shape
 

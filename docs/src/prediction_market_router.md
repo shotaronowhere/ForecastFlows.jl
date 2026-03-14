@@ -147,10 +147,10 @@ This benchmark is a release regression benchmark under the aligned surrogate
 execution model. It is not an exact on-chain execution guarantee, and it should
 not be described as blanket proof of solver dominance over other systems.
 
-Run the opt-in raw benchmark with:
+Run the opt-in downstream compatibility benchmark with:
 
 ```bash
-FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK=1 julia --project -e 'using Pkg; Pkg.test()'
+FORECASTFLOWS_RUN_DEEPTRADING_COMPAT=1 julia --project -e 'using Pkg; Pkg.test()'
 ```
 
 Run the full manual release gate with:

@@ -31,6 +31,7 @@ public parse_protocol_request, handle_protocol_request, render_protocol_response
 export OutcomeSpec
 export PredictionMarketProblem, ConstantProductMarketSpec, UniV3MarketSpec
 export UniV3LiquidityBand
+export PredictionMarketFixedGasModel
 export PredictionMarketTrade, SplitMergePlan, SolveCertificateSummary, PredictionMarketSolveResult
 export solve_prediction_market, compare_prediction_market_families
 

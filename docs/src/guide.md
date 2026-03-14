@@ -29,6 +29,10 @@ Julia-side research when needed:
 For external drivers, keep gas pricing, native-token conversion, tx grouping,
 and execution policy outside the package.
 
+`PredictionMarketFixedGasModel` is available when a caller wants a coarse
+activation-cost penalty on the public prediction-market path, but it is not an
+exact execution-cost oracle.
+
 For non-Julia drivers, use the JSON worker documented in the
 [Integration Guide](integration.md).
 
