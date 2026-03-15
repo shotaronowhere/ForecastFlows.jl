@@ -35,22 +35,38 @@ mutable struct UniV3{T} <: Edge{T}
     function UniV3(current_price, lower_ticks, liquidity, γ, Ai)
         length(Ai) == 2 || throw(ArgumentError("Ai must have length 2"))
         length(lower_ticks) == length(liquidity) || throw(ArgumentError("tick and liquidity arrays must match"))
+        isempty(lower_ticks) && throw(ArgumentError("tick and liquidity arrays must be nonempty"))
 
-        T = eltype(lower_ticks)
-        all(lower_ticks .> zero(T)) || throw(ArgumentError("tick prices must be strictly positive"))
-        all(liquidity .>= zero(T)) || throw(ArgumentError("liquidity must be nonnegative"))
-        issorted(lower_ticks; rev=true) || throw(ArgumentError("tick prices must be sorted in descending order"))
-        any(i -> lower_ticks[i] == lower_ticks[i + 1], 1:max(length(lower_ticks) - 1, 0)) &&
+        T = promote_type(
+            Float64,
+            typeof(float(current_price)),
+            typeof(float(γ)),
+            Base.promote_op(float, eltype(lower_ticks)),
+            Base.promote_op(float, eltype(liquidity)),
+        )
+        price = convert(T, current_price)
+        ticks = convert.(T, collect(lower_ticks))
+        liq = convert.(T, collect(liquidity))
+        fee = convert(T, γ)
+
+        isfinite(price) && price > zero(T) || throw(ArgumentError("current_price must be finite and positive"))
+        isfinite(fee) && zero(T) < fee <= one(T) || throw(ArgumentError("fee multiplier must lie in (0, 1]"))
+        all(isfinite, ticks) || throw(ArgumentError("tick prices must be finite"))
+        all(isfinite, liq) || throw(ArgumentError("liquidity must be finite"))
+        all(ticks .> zero(T)) || throw(ArgumentError("tick prices must be strictly positive"))
+        all(liq .>= zero(T)) || throw(ArgumentError("liquidity must be nonnegative"))
+        issorted(ticks; rev=true) || throw(ArgumentError("tick prices must be sorted in descending order"))
+        any(i -> ticks[i] == ticks[i + 1], 1:max(length(ticks) - 1, 0)) &&
             throw(ArgumentError("tick prices must be strictly decreasing"))
-        zero(T) < current_price <= lower_ticks[1] || throw(ArgumentError("current_price must lie within the represented tick range"))
-        current_tick = searchsortedlast(lower_ticks, current_price, rev=true)
+        price <= ticks[1] || throw(ArgumentError("current_price must lie within the represented tick range"))
+        current_tick = searchsortedlast(ticks, price, rev=true)
         current_tick == 0 && throw(ArgumentError("current_price must lie within the represented tick range"))
         return new{T}(
-            convert(T, current_price),
+            price,
             current_tick,
-            convert.(T, collect(lower_ticks)),
-            convert.(T, collect(liquidity)),
-            convert(T, γ),
+            ticks,
+            liq,
+            fee,
             collect(Int, Ai),
         )
     end

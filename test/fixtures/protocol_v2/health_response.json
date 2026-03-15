@@ -26,7 +26,9 @@
     ],
     "public_interfaces": [
       "PredictionMarketWorkspace",
+      "PredictionMarketFixedGasModel",
       "solve_prediction_market!",
+      "compare_prediction_market_families!",
       "PREDICTION_MARKET_PROTOCOL_VERSION",
       "HealthRequest",
       "SolveRequest",
@@ -42,6 +44,6 @@
       "serve_protocol"
     ],
     "numeric_units": "decimal collateral and outcome token units",
-    "execution_model": "stateless NDJSON; one request at a time per worker process"
+    "execution_model": "NDJSON; one request at a time per worker process; serve_protocol reuses compatible compare workspaces; handle_protocol_json is stateless"
   }
 }

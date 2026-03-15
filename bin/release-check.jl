@@ -36,9 +36,9 @@ function main()
         `$(julia_cmd) --project=$(joinpath(REPO_ROOT, "docs")) $(joinpath(REPO_ROOT, "docs", "make.jl"))`,
     )
     run_step(
-        "deep-trading benchmark sweep",
+        "deep-trading compatibility sweep",
         `$(julia_cmd) --project=$(REPO_ROOT) -e $("using Pkg; Pkg.test()")`;
-        env=["FORECASTFLOWS_RUN_DEEPTRADING_BENCHMARK" => "1"],
+        env=["FORECASTFLOWS_RUN_DEEPTRADING_COMPAT" => "1"],
     )
 
     println("\nrelease checks passed")

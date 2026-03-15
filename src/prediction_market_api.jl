@@ -48,8 +48,9 @@ end
 User-facing liquidity band for the `UniV3MarketSpec` facade. `lower_price` is
 the outcome price at the top of the band, and `liquidity_L` is the standard
 Uniswap-style liquidity parameter `L`, not the internal reserve-product `L^2`
-used by the low-level `UniV3` edge. `liquidity_L = 0` is allowed only for one
-optional final band that marks a hard exhausted-liquidity boundary.
+used by the low-level `UniV3` edge. Zero-liquidity bands encode exhausted
+intervals; if a ladder contains an interior zero-liquidity gap, it must also
+end with a zero-liquidity terminal band.
 """
 struct UniV3LiquidityBand{T <: AbstractFloat}
     lower_price::T
@@ -124,10 +125,11 @@ Pure-data description of a multi-band collateral/outcome market under the
 package `UniV3` edge model.
 
 The stable user-facing constructor accepts `bands::Vector{UniV3LiquidityBand}`
-in any order. At least one band must have positive liquidity; a terminal
-zero-liquidity band may be used to encode a hard price boundary. `bands` is the
-stable public shape; the normalized `lower_ticks` / `liquidity_k` storage is an
-internal implementation detail.
+in any order. At least one band must have positive liquidity; zero-liquidity
+bands may encode gaps, and any such gapped ladder must end with a
+zero-liquidity terminal band. `bands` is the stable public shape; the
+normalized `lower_ticks` / `liquidity_k` storage is an internal implementation
+detail.
 """
 struct UniV3MarketSpec{T <: AbstractFloat} <: AbstractPredictionMarketSpec{T}
     market_id::String
@@ -147,7 +149,7 @@ struct UniV3MarketSpec{T <: AbstractFloat} <: AbstractPredictionMarketSpec{T}
     ) where {T <: AbstractFloat}
         isempty(market_id) && throw(ArgumentError("market_id must be nonempty"))
         isempty(outcome_id) && throw(ArgumentError("outcome_id must be nonempty"))
-        UniV3(current_price, lower_ticks, liquidity_k, fee_multiplier, [1, 2])
+        _prediction_market_validate_public_univ3(current_price, lower_ticks, liquidity_k, fee_multiplier)
         return new{T}(
             String(market_id),
             String(outcome_id),
@@ -157,6 +159,37 @@ struct UniV3MarketSpec{T <: AbstractFloat} <: AbstractPredictionMarketSpec{T}
             fee_multiplier,
         )
     end
+end
+
+function _prediction_market_univ3_internal_current_price(current_price::T) where T
+    return inv(current_price)
+end
+
+function _prediction_market_univ3_internal_lower_ticks(lower_ticks::Vector{T}) where T
+    return T[inv(price) for price in Iterators.reverse(lower_ticks)]
+end
+
+function _prediction_market_univ3_internal_liquidity_k(liquidity_k::Vector{T}) where T
+    isempty(liquidity_k) && return T[]
+    if iszero(last(liquidity_k))
+        ret = reverse(liquidity_k[1:end-1])
+        push!(ret, last(liquidity_k))
+        return ret
+    end
+    return reverse(liquidity_k)
+end
+
+function _prediction_market_validate_public_univ3(
+    current_price::T,
+    lower_ticks::Vector{T},
+    liquidity_k::Vector{T},
+    fee_multiplier::T,
+) where T
+    internal_current_price = _prediction_market_univ3_internal_current_price(current_price)
+    internal_lower_ticks = _prediction_market_univ3_internal_lower_ticks(lower_ticks)
+    internal_liquidity_k = _prediction_market_univ3_internal_liquidity_k(liquidity_k)
+    UniV3(internal_current_price, internal_lower_ticks, internal_liquidity_k, fee_multiplier, [1, 2])
+    return nothing
 end
 
 function UniV3MarketSpec(
@@ -170,9 +203,8 @@ function UniV3MarketSpec(
     any(band -> band.liquidity_L > 0, bands) || throw(ArgumentError("bands must contain at least one positive-liquidity band"))
     sorted_bands = sort(collect(bands); by=band -> band.lower_price, rev=true)
     zero_band_inds = findall(band -> iszero(band.liquidity_L), sorted_bands)
-    length(zero_band_inds) <= 1 || throw(ArgumentError("bands may contain at most one zero-liquidity terminal band"))
-    !isempty(zero_band_inds) && only(zero_band_inds) != length(sorted_bands) &&
-        throw(ArgumentError("zero-liquidity band must be the final band"))
+    !isempty(zero_band_inds) && last(zero_band_inds) != length(sorted_bands) &&
+        throw(ArgumentError("zero-liquidity gaps require a final zero-liquidity terminal band"))
     lower_prices = [band.lower_price for band in sorted_bands]
     liquidity_k = [band.liquidity_L^2 for band in sorted_bands]
     T = Float64
@@ -248,6 +280,45 @@ struct PredictionMarketProblem{T <: AbstractFloat, O <: AbstractVector, M <: Abs
 end
 
 """
+    PredictionMarketFixedGasModel(market_action_costs, split_merge_action_cost)
+
+Optional request-level activation-cost model for public prediction-market solves.
+`market_action_costs` is aligned 1:1 with `problem.markets`; `split_merge_action_cost`
+is charged when the mixed split/merge edge remains active.
+
+This is a coarse edge-activation surrogate, not an exact transaction compiler. It is
+useful when callers want the public facade to discourage marginal churn, but downstream
+drivers should still keep chain-specific tx grouping, calldata packing, and final net-EV
+accounting outside the package.
+"""
+struct PredictionMarketFixedGasModel{T <: AbstractFloat}
+    market_action_costs::Vector{T}
+    split_merge_action_cost::T
+
+    function PredictionMarketFixedGasModel{T}(
+        market_action_costs::Vector{T},
+        split_merge_action_cost::T,
+    ) where {T <: AbstractFloat}
+        all(cost -> isfinite(cost) && cost >= zero(T), market_action_costs) ||
+            throw(ArgumentError("market_action_costs must be finite and nonnegative"))
+        isfinite(split_merge_action_cost) && split_merge_action_cost >= zero(T) ||
+            throw(ArgumentError("split_merge_action_cost must be finite and nonnegative"))
+        return new{T}(market_action_costs, split_merge_action_cost)
+    end
+end
+
+function PredictionMarketFixedGasModel(
+    market_action_costs::AbstractVector{<:Real},
+    split_merge_action_cost::Real,
+)
+    T = promote_type(Float64, typeof(float(split_merge_action_cost)))
+    for cost in market_action_costs
+        T = promote_type(T, typeof(float(cost)))
+    end
+    return PredictionMarketFixedGasModel{T}(convert.(T, collect(market_action_costs)), convert(T, split_merge_action_cost))
+end
+
+"""
     PredictionMarketTrade
 
 Signed direct AMM trade recovered from a solved prediction-market instance.
@@ -302,6 +373,8 @@ struct PredictionMarketSolveResult{T <: AbstractFloat}
     initial_ev::T
     final_ev::T
     ev_gain::T
+    estimated_execution_cost::Union{Nothing,T}
+    net_ev::Union{Nothing,T}
     outcome_ids::Vector{String}
     initial_collateral::T
     final_collateral::T
@@ -394,6 +467,7 @@ struct SolveRequest{T <: AbstractFloat} <: AbstractProtocolRequest
     request_id::Union{Nothing,String}
     mode::Symbol
     problem::PredictionMarketProblem{T}
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}
     certify::Bool
     throw_on_fail::Bool
     max_doublings::Int
@@ -410,6 +484,7 @@ struct CompareRequest{T <: AbstractFloat} <: AbstractProtocolRequest
     protocol_version::Int
     request_id::Union{Nothing,String}
     problem::PredictionMarketProblem{T}
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}
     certify::Bool
     throw_on_fail::Bool
     max_doublings::Int
@@ -479,6 +554,7 @@ Base.showerror(io::IO, err::_PredictionMarketSolveFailed) = print(io, err.messag
 
 StructTypes.StructType(::Type{<:OutcomeSpec}) = StructTypes.CustomStruct()
 StructTypes.StructType(::Type{<:PredictionMarketProblem}) = StructTypes.CustomStruct()
+StructTypes.StructType(::Type{<:PredictionMarketFixedGasModel}) = StructTypes.CustomStruct()
 StructTypes.StructType(::Type{<:UniV3LiquidityBand}) = StructTypes.Struct()
 StructTypes.StructType(::Type{<:PredictionMarketTrade}) = StructTypes.CustomStruct()
 StructTypes.StructType(::Type{<:SplitMergePlan}) = StructTypes.CustomStruct()
@@ -505,6 +581,11 @@ StructTypes.lower(problem::PredictionMarketProblem) = (
     collateral_balance=_prediction_market_json_number(problem.collateral_balance),
     markets=[StructTypes.lower(spec) for spec in problem.markets],
     split_bound=isnothing(problem.split_bound) ? nothing : _prediction_market_json_number(problem.split_bound),
+)
+
+StructTypes.lower(gas_model::PredictionMarketFixedGasModel) = (
+    market_action_costs=_prediction_market_json_vector(gas_model.market_action_costs),
+    split_merge_action_cost=_prediction_market_json_number(gas_model.split_merge_action_cost),
 )
 
 StructTypes.lower(spec::ConstantProductMarketSpec) = (
@@ -561,6 +642,8 @@ StructTypes.lower(result::PredictionMarketSolveResult) = (
     initial_ev=_prediction_market_json_number(result.initial_ev),
     final_ev=_prediction_market_json_number(result.final_ev),
     ev_gain=_prediction_market_json_number(result.ev_gain),
+    estimated_execution_cost=isnothing(result.estimated_execution_cost) ? nothing : _prediction_market_json_number(result.estimated_execution_cost),
+    net_ev=isnothing(result.net_ev) ? nothing : _prediction_market_json_number(result.net_ev),
     outcome_ids=copy(result.outcome_ids),
     initial_collateral=_prediction_market_json_number(result.initial_collateral),
     final_collateral=_prediction_market_json_number(result.final_collateral),
@@ -661,6 +744,13 @@ function _convert_prediction_market_spec(::Type{T}, spec::UniV3MarketSpec) where
         convert.(T, getfield(spec, :lower_ticks)),
         convert.(T, getfield(spec, :liquidity_k)),
         convert(T, spec.fee_multiplier),
+    )
+end
+
+function _convert_prediction_market_gas_model(::Type{T}, gas_model::PredictionMarketFixedGasModel) where T
+    return PredictionMarketFixedGasModel{T}(
+        convert.(T, gas_model.market_action_costs),
+        convert(T, gas_model.split_merge_action_cost),
     )
 end
 
@@ -777,9 +867,9 @@ end
 
 function _build_prediction_market_edge(spec::UniV3MarketSpec{T}, outcome_index::Int) where T
     return UniV3(
-        spec.current_price,
-        getfield(spec, :lower_ticks),
-        getfield(spec, :liquidity_k),
+        _prediction_market_univ3_internal_current_price(spec.current_price),
+        _prediction_market_univ3_internal_lower_ticks(getfield(spec, :lower_ticks)),
+        _prediction_market_univ3_internal_liquidity_k(getfield(spec, :liquidity_k)),
         spec.fee_multiplier,
         [1, outcome_index + 1],
     )
@@ -905,6 +995,45 @@ function _store_workspace_seed!(workspace::PredictionMarketWorkspace{T}, mode::S
     return nothing
 end
 
+function _prediction_market_validate_gas_model(
+    problem::PredictionMarketProblem{T},
+    gas_model::PredictionMarketFixedGasModel{T},
+) where T
+    length(gas_model.market_action_costs) == length(problem.markets) ||
+        throw(ArgumentError("gas_model.market_action_costs must have one cost per problem market"))
+    return nothing
+end
+
+function _prediction_market_internal_gas_model(
+    problem::PredictionMarketProblem{T},
+    gas_model::PredictionMarketFixedGasModel{T},
+    mode::Symbol,
+) where T
+    _prediction_market_validate_gas_model(problem, gas_model)
+    action_costs = copy(gas_model.market_action_costs)
+    if mode == :mixed_enabled
+        push!(action_costs, gas_model.split_merge_action_cost)
+    end
+    return FixedGasModel(action_costs)
+end
+
+function _prediction_market_estimated_execution_cost(
+    solver::Solver{T},
+    gas_model::PredictionMarketFixedGasModel{T},
+    mode::Symbol;
+    atol::T=max(convert(T, 1e-12), sqrt(eps(T))),
+) where T
+    cost = zero(T)
+    for (edge_idx, edge_cost) in enumerate(gas_model.market_action_costs)
+        edge_is_active(solver.xs[edge_idx]; atol=atol) || continue
+        cost += edge_cost
+    end
+    if mode == :mixed_enabled && length(solver.xs) > length(gas_model.market_action_costs)
+        edge_is_active(solver.xs[length(gas_model.market_action_costs) + 1]; atol=atol) && (cost += gas_model.split_merge_action_cost)
+    end
+    return cost
+end
+
 function _extract_split_merge_plan(x::AbstractVector{T}; atol::T=max(convert(T, 1e-12), sqrt(eps(T)))) where T
     length(x) <= 1 && return SplitMergePlan(zero(T), zero(T))
     w = sum(@view x[2:end]) / convert(T, length(x) - 1)
@@ -972,6 +1101,8 @@ function _mark_prediction_market_uncertified(
         result.initial_ev,
         result.final_ev,
         result.ev_gain,
+        result.estimated_execution_cost,
+        result.net_ev,
         copy(result.outcome_ids),
         result.initial_collateral,
         result.final_collateral,
@@ -982,7 +1113,14 @@ function _mark_prediction_market_uncertified(
     )
 end
 
-function _prediction_market_result(problem::PredictionMarketProblem{T}, s::Solver{T}, mode::Symbol, solve_time::Real) where T
+function _prediction_market_result(
+    problem::PredictionMarketProblem{T},
+    s::Solver{T},
+    mode::Symbol,
+    solve_time::Real;
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
+    gas_atol::T=max(convert(T, 1e-12), sqrt(eps(T))),
+) where T
     outcome_ids = copy(getfield.(problem.outcomes, :outcome_id))
     initial_holdings = [outcome.initial_holding for outcome in problem.outcomes]
     outcome_values = [outcome.fair_value for outcome in problem.outcomes]
@@ -991,6 +1129,8 @@ function _prediction_market_result(problem::PredictionMarketProblem{T}, s::Solve
     final_holdings = initial_holdings .+ s.y[2:end]
     final_ev = final_collateral + dot(outcome_values, final_holdings)
     trades, split_merge = _extract_prediction_market_trades(problem, s)
+    estimated_execution_cost = isnothing(gas_model) ? nothing : _prediction_market_estimated_execution_cost(s, gas_model, mode; atol=gas_atol)
+    net_ev = isnothing(estimated_execution_cost) ? nothing : final_ev - estimated_execution_cost
     cert_summary = isnothing(s.certificate) ? nothing : _certificate_summary(s.certificate)
     status = isnothing(cert_summary) ? "solved" : (cert_summary.passed ? "certified" : "uncertified")
     return PredictionMarketSolveResult{T}(
@@ -1001,6 +1141,8 @@ function _prediction_market_result(problem::PredictionMarketProblem{T}, s::Solve
         initial_ev,
         final_ev,
         final_ev - initial_ev,
+        estimated_execution_cost,
+        net_ev,
         outcome_ids,
         problem.collateral_balance,
         final_collateral,
@@ -1011,11 +1153,18 @@ function _prediction_market_result(problem::PredictionMarketProblem{T}, s::Solve
     )
 end
 
-function _prediction_market_trivial_result(problem::PredictionMarketProblem{T}, mode::Symbol; certify::Bool=true) where T
+function _prediction_market_trivial_result(
+    problem::PredictionMarketProblem{T},
+    mode::Symbol;
+    certify::Bool=true,
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
+) where T
     outcome_ids = copy(getfield.(problem.outcomes, :outcome_id))
     initial_holdings = T[outcome.initial_holding for outcome in problem.outcomes]
     outcome_values = T[outcome.fair_value for outcome in problem.outcomes]
     initial_ev = problem.collateral_balance + dot(outcome_values, initial_holdings)
+    estimated_execution_cost = isnothing(gas_model) ? nothing : zero(T)
+    net_ev = isnothing(estimated_execution_cost) ? nothing : initial_ev
     certificate = certify ? SolveCertificateSummary{T}(
         true,
         "certified",
@@ -1034,6 +1183,8 @@ function _prediction_market_trivial_result(problem::PredictionMarketProblem{T}, 
         initial_ev,
         initial_ev,
         zero(T),
+        estimated_execution_cost,
+        net_ev,
         outcome_ids,
         problem.collateral_balance,
         problem.collateral_balance,
@@ -1058,13 +1209,15 @@ function _solve_prediction_market_once(
     solver_options::NamedTuple=(;),
     workspace::Union{Nothing,PredictionMarketWorkspace{T}}=nothing,
     ν0::Union{Nothing,AbstractVector{T}}=nothing,
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
 ) where T
     if mode == :direct_only && isempty(problem.markets)
+        !isnothing(gas_model) && _prediction_market_validate_gas_model(problem, gas_model)
         if !isnothing(workspace)
             _prediction_market_compatible_layout(workspace.layout, problem) ||
                 throw(ArgumentError("problem topology does not match workspace template"))
         end
-        return _prediction_market_trivial_result(problem, mode; certify=certify), zeros(T, length(problem.outcomes) + 1)
+        return _prediction_market_trivial_result(problem, mode; certify=certify, gas_model=gas_model), zeros(T, length(problem.outcomes) + 1)
     end
 
     layout = isnothing(workspace) ? _prediction_market_layout(problem) : workspace.layout::_PredictionMarketLayout
@@ -1072,9 +1225,19 @@ function _solve_prediction_market_once(
         _prediction_market_solver(problem, layout, mode, split_bound) :
         _workspace_solver!(workspace, problem, mode, split_bound)
     seed = isnothing(ν0) && !isnothing(workspace) ? _workspace_seed(workspace, mode) : ν0
+    internal_gas_model = isnothing(gas_model) ? nothing : _prediction_market_internal_gas_model(problem, gas_model, mode)
 
     solve_time = try
-        solve!(solver; certify=certify, throw_on_fail=throw_on_fail, ν0=seed, solver_options...)
+        if isnothing(internal_gas_model)
+            solve!(solver; certify=certify, throw_on_fail=throw_on_fail, ν0=seed, solver_options...)
+        else
+            gas_pruning = solve_with_fixed_gas!(solver, internal_gas_model; certify=certify, ν0=seed, solver_options...)
+            if throw_on_fail && certify && (isnothing(solver.certificate) || !solver.certificate.passed)
+                cert_message = isnothing(solver.certificate) ? "missing certificate after gas-aware solve" : solver.certificate.message
+                throw(_PredictionMarketSolveFailed("solve_with_fixed_gas! failed certification: $(cert_message)"))
+            end
+            gas_pruning.solve_time
+        end
     catch err
         if throw_on_fail && err isa ErrorException
             message = sprint(showerror, err)
@@ -1084,7 +1247,7 @@ function _solve_prediction_market_once(
     end
 
     !isnothing(workspace) && _store_workspace_seed!(workspace, mode, solver.ν)
-    return _prediction_market_result(problem, solver, mode, solve_time), copy(solver.ν)
+    return _prediction_market_result(problem, solver, mode, solve_time; gas_model=gas_model), copy(solver.ν)
 end
 
 function _solve_prediction_market_mixed(
@@ -1094,6 +1257,7 @@ function _solve_prediction_market_mixed(
     throw_on_fail::Bool=true,
     solver_options::NamedTuple=(;),
     workspace::Union{Nothing,PredictionMarketWorkspace{T}}=nothing,
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
 ) where T
     max_doublings >= 0 || throw(ArgumentError("max_doublings must be nonnegative"))
 
@@ -1110,6 +1274,7 @@ function _solve_prediction_market_mixed(
             solver_options=solver_options,
             workspace=workspace,
             ν0=ν_seed,
+            gas_model=gas_model,
         )
         best_result = result
         if max(result.split_merge.mint, result.split_merge.merge) < convert(T, 0.8) * split_bound
@@ -1128,7 +1293,7 @@ function _solve_prediction_market_mixed(
 end
 
 """
-    solve_prediction_market(problem; mode=:direct_only, certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
+    solve_prediction_market(problem; mode=:direct_only, gas_model=nothing, certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
 
 Solve a one-collateral prediction-market routing problem and return a pure-data
 [`PredictionMarketSolveResult`](@ref). `mode=:mixed_enabled` adds a single
@@ -1140,6 +1305,7 @@ no-trade route.
 function solve_prediction_market(
     problem::PredictionMarketProblem{T};
     mode::Symbol=:direct_only,
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
     certify::Bool=true,
     throw_on_fail::Bool=true,
     max_doublings::Int=6,
@@ -1156,6 +1322,7 @@ function solve_prediction_market(
             certify=certify,
             throw_on_fail=throw_on_fail,
             solver_options=checked_solver_options,
+            gas_model=gas_model,
         )
         return result
     end
@@ -1165,11 +1332,12 @@ function solve_prediction_market(
         certify=certify,
         throw_on_fail=throw_on_fail,
         solver_options=checked_solver_options,
+        gas_model=gas_model,
     )
 end
 
 """
-    solve_prediction_market!(workspace, problem; mode=:direct_only, certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
+    solve_prediction_market!(workspace, problem; mode=:direct_only, gas_model=nothing, certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
 
 Advanced repeated-solve entrypoint that reuses workspace normalization and, when
 possible, solver buffers and dual seeds across calls. The input `problem` must
@@ -1182,6 +1350,7 @@ function solve_prediction_market!(
     workspace::PredictionMarketWorkspace{T},
     problem::PredictionMarketProblem{T};
     mode::Symbol=:direct_only,
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
     certify::Bool=true,
     throw_on_fail::Bool=true,
     max_doublings::Int=6,
@@ -1199,6 +1368,7 @@ function solve_prediction_market!(
             throw_on_fail=throw_on_fail,
             solver_options=checked_solver_options,
             workspace=workspace,
+            gas_model=gas_model,
         )
         return result
     end
@@ -1209,26 +1379,49 @@ function solve_prediction_market!(
         throw_on_fail=throw_on_fail,
         solver_options=checked_solver_options,
         workspace=workspace,
+        gas_model=gas_model,
     )
 end
 
 """
-    compare_prediction_market_families(problem; certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
+    compare_prediction_market_families(problem; gas_model=nothing, certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
 
 Run both `:direct_only` and `:mixed_enabled` prediction-market solves under the
 same settings and return `(direct_only=..., mixed_enabled=...)`.
 """
-function compare_prediction_market_families(
-    problem::PredictionMarketProblem;
+function compare_prediction_market_families!(
+    workspace::PredictionMarketWorkspace{T},
+    problem::PredictionMarketProblem{T};
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
     certify::Bool=true,
     throw_on_fail::Bool=true,
     max_doublings::Int=6,
     solver_options::NamedTuple=(;),
-)
+) where T
     checked_solver_options = _prediction_market_solver_options(solver_options)
     return (
-        direct_only=solve_prediction_market(problem; mode=:direct_only, certify=certify, throw_on_fail=throw_on_fail, solver_options=checked_solver_options),
-        mixed_enabled=solve_prediction_market(problem; mode=:mixed_enabled, certify=certify, throw_on_fail=throw_on_fail, max_doublings=max_doublings, solver_options=checked_solver_options),
+        direct_only=solve_prediction_market!(workspace, problem; mode=:direct_only, gas_model=gas_model, certify=certify, throw_on_fail=throw_on_fail, solver_options=checked_solver_options),
+        mixed_enabled=solve_prediction_market!(workspace, problem; mode=:mixed_enabled, gas_model=gas_model, certify=certify, throw_on_fail=throw_on_fail, max_doublings=max_doublings, solver_options=checked_solver_options),
+    )
+end
+
+function compare_prediction_market_families(
+    problem::PredictionMarketProblem{T};
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
+    certify::Bool=true,
+    throw_on_fail::Bool=true,
+    max_doublings::Int=6,
+    solver_options::NamedTuple=(;),
+) where T
+    workspace = PredictionMarketWorkspace(problem)
+    return compare_prediction_market_families!(
+        workspace,
+        problem;
+        gas_model=gas_model,
+        certify=certify,
+        throw_on_fail=throw_on_fail,
+        max_doublings=max_doublings,
+        solver_options=solver_options,
     )
 end
 
@@ -1240,24 +1433,26 @@ function SolveRequest(
     request_id=nothing,
     protocol_version::Integer=PREDICTION_MARKET_PROTOCOL_VERSION,
     mode::Symbol=:direct_only,
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
     certify::Bool=true,
     throw_on_fail::Bool=true,
     max_doublings::Int=6,
     solver_options::NamedTuple=(;),
 ) where T
-    return SolveRequest{T}(Int(protocol_version), isnothing(request_id) ? nothing : String(request_id), mode, problem, certify, throw_on_fail, max_doublings, solver_options)
+    return SolveRequest{T}(Int(protocol_version), isnothing(request_id) ? nothing : String(request_id), mode, problem, gas_model, certify, throw_on_fail, max_doublings, solver_options)
 end
 
 function CompareRequest(
     problem::PredictionMarketProblem{T};
     request_id=nothing,
     protocol_version::Integer=PREDICTION_MARKET_PROTOCOL_VERSION,
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
     certify::Bool=true,
     throw_on_fail::Bool=true,
     max_doublings::Int=6,
     solver_options::NamedTuple=(;),
 ) where T
-    return CompareRequest{T}(Int(protocol_version), isnothing(request_id) ? nothing : String(request_id), problem, certify, throw_on_fail, max_doublings, solver_options)
+    return CompareRequest{T}(Int(protocol_version), isnothing(request_id) ? nothing : String(request_id), problem, gas_model, certify, throw_on_fail, max_doublings, solver_options)
 end
 
 function _prediction_market_protocol_require(obj, field::Symbol, path::AbstractString)
@@ -1408,6 +1603,27 @@ function _prediction_market_protocol_problem_from_json(obj)
     )
 end
 
+function _prediction_market_protocol_gas_model_from_json(obj, problem::PredictionMarketProblem)
+    gas_obj = _prediction_market_protocol_object(obj, "gas_model")
+    costs_json = _prediction_market_protocol_array(
+        _prediction_market_protocol_require(gas_obj, :market_action_costs, "gas_model.market_action_costs"),
+        "gas_model.market_action_costs",
+    )
+    market_action_costs = Float64[
+        _prediction_market_protocol_float(cost, "gas_model.market_action_costs[$i]"; quantity=true)
+        for (i, cost) in enumerate(costs_json)
+    ]
+    split_merge_action_cost = _prediction_market_protocol_float(
+        _prediction_market_protocol_require(gas_obj, :split_merge_action_cost, "gas_model.split_merge_action_cost"),
+        "gas_model.split_merge_action_cost";
+        quantity=true,
+    )
+    return _convert_prediction_market_gas_model(
+        typeof(problem.collateral_balance),
+        PredictionMarketFixedGasModel(market_action_costs, split_merge_action_cost),
+    )
+end
+
 function _prediction_market_protocol_options(payload)
     hasproperty(payload, :solve_options) || return (certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
     opts = _prediction_market_protocol_object(getproperty(payload, :solve_options), "solve_options")
@@ -1455,11 +1671,16 @@ function _parse_protocol_request(payload)
         mode = hasproperty(payload, :mode) ?
             Symbol(_prediction_market_protocol_string(getproperty(payload, :mode), "mode")) :
             :direct_only
+        problem = _prediction_market_protocol_problem_from_json(_prediction_market_protocol_require(payload, :problem, "problem"))
+        gas_model = hasproperty(payload, :gas_model) && !isnothing(payload.gas_model) ?
+            _prediction_market_protocol_gas_model_from_json(getproperty(payload, :gas_model), problem) :
+            nothing
         return SolveRequest(
-            _prediction_market_protocol_problem_from_json(_prediction_market_protocol_require(payload, :problem, "problem"));
+            problem;
             request_id=request_id,
             protocol_version=protocol_version,
             mode=mode,
+            gas_model=gas_model,
             certify=options.certify,
             throw_on_fail=options.throw_on_fail,
             max_doublings=options.max_doublings,
@@ -1467,10 +1688,15 @@ function _parse_protocol_request(payload)
         )
     elseif command == "compare_prediction_market_families"
         options = _prediction_market_protocol_options(payload)
+        problem = _prediction_market_protocol_problem_from_json(_prediction_market_protocol_require(payload, :problem, "problem"))
+        gas_model = hasproperty(payload, :gas_model) && !isnothing(payload.gas_model) ?
+            _prediction_market_protocol_gas_model_from_json(getproperty(payload, :gas_model), problem) :
+            nothing
         return CompareRequest(
-            _prediction_market_protocol_problem_from_json(_prediction_market_protocol_require(payload, :problem, "problem"));
+            problem;
             request_id=request_id,
             protocol_version=protocol_version,
+            gas_model=gas_model,
             certify=options.certify,
             throw_on_fail=options.throw_on_fail,
             max_doublings=options.max_doublings,
@@ -1509,7 +1735,9 @@ function handle_protocol_request(req::HealthRequest)
         ["prediction_market_facade", "ndjson_protocol"],
         [
             "PredictionMarketWorkspace",
+            "PredictionMarketFixedGasModel",
             "solve_prediction_market!",
+            "compare_prediction_market_families!",
             "PREDICTION_MARKET_PROTOCOL_VERSION",
             "HealthRequest",
             "SolveRequest",
@@ -1525,7 +1753,7 @@ function handle_protocol_request(req::HealthRequest)
             "serve_protocol",
         ],
         "decimal collateral and outcome token units",
-        "stateless NDJSON; one request at a time per worker process",
+        "NDJSON; one request at a time per worker process; serve_protocol reuses compatible compare workspaces; handle_protocol_json is stateless",
     )
 end
 
@@ -1533,6 +1761,7 @@ function handle_protocol_request(req::SolveRequest{T}) where T
     result = solve_prediction_market(
         req.problem;
         mode=req.mode,
+        gas_model=req.gas_model,
         certify=req.certify,
         throw_on_fail=req.throw_on_fail,
         max_doublings=req.max_doublings,
@@ -1544,12 +1773,28 @@ end
 function handle_protocol_request(req::CompareRequest{T}) where T
     result = compare_prediction_market_families(
         req.problem;
+        gas_model=req.gas_model,
         certify=req.certify,
         throw_on_fail=req.throw_on_fail,
         max_doublings=req.max_doublings,
         solver_options=req.solver_options,
     )
     return CompareResponse{T}(req.protocol_version, req.request_id, result.direct_only, result.mixed_enabled)
+end
+
+function _worker_compare_workspace!(
+    workspace_ref::Base.RefValue{Any},
+    problem::PredictionMarketProblem{T},
+) where T
+    cached = workspace_ref[]
+    if cached isa PredictionMarketWorkspace{T} &&
+        _prediction_market_compatible_layout(getfield(cached, :layout), problem)
+        return cached::PredictionMarketWorkspace{T}
+    end
+
+    workspace = PredictionMarketWorkspace(problem)
+    workspace_ref[] = workspace
+    return workspace
 end
 
 """
@@ -1567,9 +1812,12 @@ _prediction_market_protocol_error_code(err::Exception) = "internal_error"
     handle_protocol_json(request)
 
 Parse one protocol request line, execute it, and return the rendered JSON
-response string.
+response string. This helper is stateless across calls.
 """
-function handle_protocol_json(request::AbstractString)
+function _handle_protocol_json_with_workspace_cache(
+    request::AbstractString,
+    compare_workspace_ref::Base.RefValue{Any},
+)
     request_id = nothing
     try
         payload = try
@@ -1578,7 +1826,26 @@ function handle_protocol_json(request::AbstractString)
             throw(ArgumentError("invalid JSON: $(sprint(showerror, err))"))
         end
         request_id = _prediction_market_protocol_optional_request_id(payload)
-        return render_protocol_response(handle_protocol_request(_parse_protocol_request(payload)))
+        req = _parse_protocol_request(payload)
+        if req isa CompareRequest
+            workspace = _worker_compare_workspace!(compare_workspace_ref, req.problem)
+            result = compare_prediction_market_families!(
+                workspace,
+                req.problem;
+                gas_model=req.gas_model,
+                certify=req.certify,
+                throw_on_fail=req.throw_on_fail,
+                max_doublings=req.max_doublings,
+                solver_options=req.solver_options,
+            )
+            return render_protocol_response(CompareResponse{typeof(req.problem.collateral_balance)}(
+                req.protocol_version,
+                req.request_id,
+                result.direct_only,
+                result.mixed_enabled,
+            ))
+        end
+        return render_protocol_response(handle_protocol_request(req))
     catch err
         err isa Union{InterruptException, OutOfMemoryError, StackOverflowError} && rethrow(err)
         return render_protocol_response(ErrorResponse(
@@ -1590,15 +1857,21 @@ function handle_protocol_json(request::AbstractString)
     end
 end
 
+function handle_protocol_json(request::AbstractString)
+    return _handle_protocol_json_with_workspace_cache(request, Ref{Any}(nothing))
+end
+
 """
     serve_protocol(input, output)
 
-Serve the stateless NDJSON worker protocol on `input`/`output`.
+Serve the NDJSON worker protocol on `input`/`output`. Compatible compare
+requests may reuse an internal workspace cache across lines.
 """
 function serve_protocol(input::IO, output::IO)
+    compare_workspace_ref = Ref{Any}(nothing)
     for line in eachline(input)
         isempty(strip(line)) && continue
-        println(output, handle_protocol_json(line))
+        println(output, _handle_protocol_json_with_workspace_cache(line, compare_workspace_ref))
         flush(output)
     end
     return nothing

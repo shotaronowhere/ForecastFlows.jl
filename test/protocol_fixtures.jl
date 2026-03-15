@@ -182,7 +182,9 @@ function assert_health_response_schema(response)
     @test result.stable_interfaces == ["prediction_market_facade", "ndjson_protocol"]
     @test result.public_interfaces == [
         "PredictionMarketWorkspace",
+        "PredictionMarketFixedGasModel",
         "solve_prediction_market!",
+        "compare_prediction_market_families!",
         "PREDICTION_MARKET_PROTOCOL_VERSION",
         "HealthRequest",
         "SolveRequest",
@@ -198,7 +200,7 @@ function assert_health_response_schema(response)
         "serve_protocol",
     ]
     @test result.numeric_units == "decimal collateral and outcome token units"
-    @test result.execution_model == "stateless NDJSON; one request at a time per worker process"
+    @test result.execution_model == "NDJSON; one request at a time per worker process; serve_protocol reuses compatible compare workspaces; handle_protocol_json is stateless"
 end
 
 function assert_error_response_schema(response, request_id::AbstractString, message::AbstractString)
