@@ -200,7 +200,7 @@ function assert_health_response_schema(response)
         "serve_protocol",
     ]
     @test result.numeric_units == "decimal collateral and outcome token units"
-    @test result.execution_model == "cached NDJSON; one request at a time per worker process; compatible compare requests reuse a workspace"
+    @test result.execution_model == "NDJSON; one request at a time per worker process; serve_protocol reuses compatible compare workspaces; handle_protocol_json is stateless"
 end
 
 function assert_error_response_schema(response, request_id::AbstractString, message::AbstractString)
@@ -245,7 +245,6 @@ end
             @test hasproperty(response, :result)
             @test hasproperty(response.result, :direct_only)
             @test hasproperty(response.result, :mixed_enabled)
-            @test response.result.workspace_reused === false
             assert_solve_result_schema(response.result.direct_only)
             assert_solve_result_schema(response.result.mixed_enabled)
         elseif name == "invalid_request"

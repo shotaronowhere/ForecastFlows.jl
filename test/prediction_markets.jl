@@ -2859,7 +2859,8 @@ end
             @test String.(collect(responses[1].result.stable_interfaces)) == ["prediction_market_facade", "ndjson_protocol"]
             @test String.(collect(responses[1].result.public_interfaces)) == expected_public_interfaces
             @test responses[1].result.numeric_units == "decimal collateral and outcome token units"
-            @test occursin("compatible compare requests reuse a workspace", String(responses[1].result.execution_model))
+            @test occursin("serve_protocol reuses compatible compare workspaces", String(responses[1].result.execution_model))
+            @test occursin("handle_protocol_json is stateless", String(responses[1].result.execution_model))
 
             @test responses[2].ok
             @test responses[2].request_id == "solve"
@@ -2876,13 +2877,11 @@ end
             @test responses[4].request_id == "compare"
             @test responses[4].result.direct_only.mode == "direct_only"
             @test responses[4].result.mixed_enabled.mode == "mixed_enabled"
-            @test responses[4].result.workspace_reused === false
 
             @test responses[5].ok
             @test responses[5].request_id == "compare-reused"
             @test responses[5].result.direct_only.mode == "direct_only"
             @test responses[5].result.mixed_enabled.mode == "mixed_enabled"
-            @test responses[5].result.workspace_reused === true
 
             @test responses[6].ok
             @test responses[6].request_id == "uni"

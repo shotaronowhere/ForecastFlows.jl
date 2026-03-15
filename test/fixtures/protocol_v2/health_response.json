@@ -44,6 +44,6 @@
       "serve_protocol"
     ],
     "numeric_units": "decimal collateral and outcome token units",
-    "execution_model": "cached NDJSON; one request at a time per worker process; compatible compare requests reuse a workspace"
+    "execution_model": "NDJSON; one request at a time per worker process; serve_protocol reuses compatible compare workspaces; handle_protocol_json is stateless"
   }
 }

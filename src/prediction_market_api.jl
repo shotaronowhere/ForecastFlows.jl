@@ -529,7 +529,6 @@ struct CompareResponse{T <: AbstractFloat} <: AbstractProtocolResponse
     request_id::Union{Nothing,String}
     direct_only::PredictionMarketSolveResult{T}
     mixed_enabled::PredictionMarketSolveResult{T}
-    workspace_reused::Bool
 end
 
 """
@@ -686,7 +685,6 @@ StructTypes.lower(resp::CompareResponse) = (
     result=(
         direct_only=StructTypes.lower(resp.direct_only),
         mixed_enabled=StructTypes.lower(resp.mixed_enabled),
-        workspace_reused=resp.workspace_reused,
     ),
 )
 
@@ -1752,7 +1750,7 @@ function handle_protocol_request(req::HealthRequest)
             "serve_protocol",
         ],
         "decimal collateral and outcome token units",
-        "cached NDJSON; one request at a time per worker process; compatible compare requests reuse a workspace",
+        "NDJSON; one request at a time per worker process; serve_protocol reuses compatible compare workspaces; handle_protocol_json is stateless",
     )
 end
 
@@ -1778,7 +1776,7 @@ function handle_protocol_request(req::CompareRequest{T}) where T
         max_doublings=req.max_doublings,
         solver_options=req.solver_options,
     )
-    return CompareResponse{T}(req.protocol_version, req.request_id, result.direct_only, result.mixed_enabled, false)
+    return CompareResponse{T}(req.protocol_version, req.request_id, result.direct_only, result.mixed_enabled)
 end
 
 function _worker_compare_workspace!(
@@ -1788,12 +1786,12 @@ function _worker_compare_workspace!(
     cached = workspace_ref[]
     if cached isa PredictionMarketWorkspace{T} &&
         _prediction_market_compatible_layout(getfield(cached, :layout), problem)
-        return cached::PredictionMarketWorkspace{T}, true
+        return cached::PredictionMarketWorkspace{T}
     end
 
     workspace = PredictionMarketWorkspace(problem)
     workspace_ref[] = workspace
-    return workspace, false
+    return workspace
 end
 
 """
@@ -1811,7 +1809,7 @@ _prediction_market_protocol_error_code(err::Exception) = "internal_error"
     handle_protocol_json(request)
 
 Parse one protocol request line, execute it, and return the rendered JSON
-response string.
+response string. This helper is stateless across calls.
 """
 function _handle_protocol_json_with_workspace_cache(
     request::AbstractString,
@@ -1827,7 +1825,7 @@ function _handle_protocol_json_with_workspace_cache(
         request_id = _prediction_market_protocol_optional_request_id(payload)
         req = _parse_protocol_request(payload)
         if req isa CompareRequest
-            workspace, workspace_reused = _worker_compare_workspace!(compare_workspace_ref, req.problem)
+            workspace = _worker_compare_workspace!(compare_workspace_ref, req.problem)
             result = compare_prediction_market_families!(
                 workspace,
                 req.problem;
@@ -1842,7 +1840,6 @@ function _handle_protocol_json_with_workspace_cache(
                 req.request_id,
                 result.direct_only,
                 result.mixed_enabled,
-                workspace_reused,
             ))
         end
         return render_protocol_response(handle_protocol_request(req))
@@ -1864,7 +1861,8 @@ end
 """
     serve_protocol(input, output)
 
-Serve the cached NDJSON worker protocol on `input`/`output`.
+Serve the NDJSON worker protocol on `input`/`output`. Compatible compare
+requests may reuse an internal workspace cache across lines.
 """
 function serve_protocol(input::IO, output::IO)
     compare_workspace_ref = Ref{Any}(nothing)

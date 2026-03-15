@@ -3,7 +3,7 @@
 ForecastFlows exposes two supported dependency boundaries:
 
 - an in-process Julia prediction-market facade
-- a cached NDJSON worker at `bin/forecastflows-worker.jl`
+- an NDJSON worker at `bin/forecastflows-worker.jl`
 
 Once `v2.0.0` is tagged, install the source release with:
 
@@ -203,7 +203,9 @@ The worker speaks newline-delimited JSON on stdin/stdout.
 - commands: `health`, `solve_prediction_market`, `compare_prediction_market_families`
 - `outcome_id` is the stable outcome reference
 - numeric inputs are decimal collateral/outcome units
-- execution model: cached NDJSON, one request at a time per worker process
+- execution model: one request at a time per worker process; `serve_protocol`
+  reuses compatible compare workspaces internally, while
+  `handle_protocol_json` remains stateless
 
 Compare requests may include either no gas model, the legacy fixed-activation
 shape, or the tagged execution-gas union:
@@ -222,8 +224,9 @@ shape, or the tagged execution-gas union:
 }
 ```
 
-Worker compare responses also include `workspace_reused` so callers can
-distinguish cold topology setup from steady-state repeated compares.
+Long-lived workers created with `serve_protocol` may reuse a compare workspace
+internally across compatible compare requests. That cache is an implementation
+detail and does not change the response schema.
 
 Example request:
 
