@@ -22,7 +22,7 @@ include("solver.jl")
 include("solver_bfgs.jl")
 include("prediction_market_api.jl")
 
-public PredictionMarketWorkspace, solve_prediction_market!
+public PredictionMarketWorkspace, solve_prediction_market!, compare_prediction_market_families!
 public PREDICTION_MARKET_PROTOCOL_VERSION
 public HealthRequest, SolveRequest, CompareRequest
 public HealthResponse, SolveResponse, CompareResponse, ErrorResponse
@@ -66,6 +66,7 @@ export solve_prediction_market, compare_prediction_market_families
     solve_prediction_market(uni_problem; mode=:direct_only, certify=true, throw_on_fail=false, solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000))
     workspace = PredictionMarketWorkspace(base_problem)
     solve_prediction_market!(workspace, base_problem; mode=:direct_only, certify=true, throw_on_fail=false, solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000))
+    compare_prediction_market_families!(workspace, base_problem; certify=true, throw_on_fail=false, max_doublings=0, solver_options=(; pgtol=1e-8, max_iter=5_000, max_fun=10_000))
     handle_protocol_json("""{"protocol_version":2,"request_id":"health","command":"health"}""")
 end
 

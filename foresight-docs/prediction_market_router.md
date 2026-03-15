@@ -154,24 +154,25 @@ Because the conjugate is nondifferentiable on the lower-bound face `nu = c`, the
 
 AMM fees remain inside each AMM edge oracle through `gamma`.
 
-Fixed gas is handled outside the convex relaxation via `solve_with_fixed_gas!`.
+Fixed gas (per-edge activation costs) uses a two-phase warm-started method.
+The theory, failure analysis of the prior in-loop thresholding approach, and
+full plan are documented in `foresight-docs/gas_aware_solver.md`.
 
-The wrapper:
+The short version: the fixed-fee problem is NP-hard (Diamandis, Chapter 7).
+In-loop thresholding creates nonsmoothness that L-BFGS-B cannot reliably
+handle. The correct approach is to solve a smooth gas-free problem first,
+determine the active edge set by comparing edge values to gas costs, then
+re-solve the reduced smooth problem with warm-started duals.
 
-1. solves the raw certified route
-2. treats recovered active edges as discrete gas-bearing actions
-3. performs route-level leave-one-out re-solves
-4. removes only actions whose removal improves net value
-5. repeats until no further fixed-gas pruning helps
-
-This is a fixed-charge outer loop, not the Chapter 7 convex fixed-fee relaxation.
-
-For the imported 98-market benchmark, the current gas layer is intentionally rough. The Julia test harness uses benchmark-local fixed action charges:
+For the imported 98-market benchmark, the current gas layer uses benchmark-local
+fixed action charges:
 
 - `0.00018` per active AMM edge
 - `0.00021` for the split/merge edge
 
-This is useful as a coarse L2 proxy for route pruning, but it is not the same gas model as the Deep-Trading benchmark, which uses grouped execution plans plus OP L2 and L1 calldata pricing.
+This is useful as a coarse L2 proxy for fixed edge activation, but it is not
+the same gas model as the Deep-Trading benchmark, which uses grouped execution
+plans plus OP L2 and L1 calldata pricing.
 
 ## Imported Deep-Trading Benchmark
 
@@ -243,7 +244,11 @@ The benchmark also reports, but does not assert equality against, the committed 
 
 Deep-Trading references are compared only against replayed executable EV, not against the raw convex upper bound.
 
-Gas-adjusted EV remains a separate Julia-only benchmark via `solve_with_fixed_gas!`; the committed Deep-Trading fixture fields used here are raw EV, not net EV. The fixture also contains `expected_onchain_exact_ev`, but that value is computed under the Deep-Trading on-chain artifact and gas model, not the Julia fixed-charge proxy.
+Gas-adjusted EV remains a Julia-local fixed-fee benchmark via the same
+Chapter 7 thresholding used by `solve_with_fixed_gas!`; the committed
+Deep-Trading fixture fields used here are raw EV, not net EV. The fixture also
+contains `expected_onchain_exact_ev`, but that value is computed under the
+Deep-Trading on-chain artifact and gas model, not the Julia fixed-charge proxy.
 
 A large gap between the raw convex upper bound and the replayed executable EV should be interpreted as missing execution-feasibility constraints in the relaxed convex program, not as evidence that the dual solve is numerically wrong.
 
@@ -291,7 +296,8 @@ The current test suite covers:
 Not implemented in v1:
 
 - split/merge protocol fees
-- Chapter 7 fixed-charge convex gas relaxation
+- directional edge splitting for direction-dependent gas costs
+- robust routing under stale/uncertain reserves
 - block-level gas bundle packing
 - on-chain reserve fetching and transaction construction
 - general primal recovery for arbitrary zero-utility edges beyond the current split/merge specialization

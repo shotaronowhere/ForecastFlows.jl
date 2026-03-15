@@ -1691,6 +1691,7 @@ end
             "PredictionMarketWorkspace",
             "PredictionMarketFixedGasModel",
             "solve_prediction_market!",
+            "compare_prediction_market_families!",
             "PREDICTION_MARKET_PROTOCOL_VERSION",
             "HealthRequest",
             "SolveRequest",
@@ -2308,11 +2309,23 @@ end
                 throw_on_fail=false,
                 solver_options=facade_solver_options,
             )
+            workspace = ForecastFlows.PredictionMarketWorkspace(comparison_problem)
+            workspace_comparison = ForecastFlows.compare_prediction_market_families!(
+                workspace,
+                comparison_problem;
+                max_doublings=0,
+                throw_on_fail=false,
+                solver_options=facade_solver_options,
+            )
 
             @test comparison.direct_only.final_ev ≈ direct_result.final_ev atol=1e-8
             @test comparison.direct_only.final_collateral ≈ direct_result.final_collateral atol=1e-8
             @test comparison.mixed_enabled.final_ev ≈ mixed_result.final_ev atol=1e-8
             @test comparison.mixed_enabled.split_merge.mint ≈ mixed_result.split_merge.mint atol=1e-8
+            @test workspace_comparison.direct_only.final_ev ≈ comparison.direct_only.final_ev atol=1e-8
+            @test workspace_comparison.direct_only.final_collateral ≈ comparison.direct_only.final_collateral atol=1e-8
+            @test workspace_comparison.mixed_enabled.final_ev ≈ comparison.mixed_enabled.final_ev atol=1e-8
+            @test workspace_comparison.mixed_enabled.split_merge.mint ≈ comparison.mixed_enabled.split_merge.mint atol=1e-8
 
             gas_model = deep_trading_compatibility_gas_model(comparison_problem)
             direct_gas = solve_prediction_market(
@@ -2337,11 +2350,21 @@ end
                 throw_on_fail=false,
                 solver_options=facade_solver_options,
             )
+            workspace_gas = ForecastFlows.compare_prediction_market_families!(
+                workspace,
+                comparison_problem;
+                gas_model=gas_model,
+                max_doublings=0,
+                throw_on_fail=false,
+                solver_options=facade_solver_options,
+            )
 
             @test comparison_gas.direct_only.final_ev ≈ direct_gas.final_ev atol=1e-8
             @test comparison_gas.direct_only.net_ev ≈ direct_gas.net_ev atol=1e-8
             @test comparison_gas.mixed_enabled.final_ev ≈ mixed_gas.final_ev atol=1e-8
             @test comparison_gas.mixed_enabled.net_ev ≈ mixed_gas.net_ev atol=1e-8
+            @test workspace_gas.direct_only.final_ev ≈ comparison_gas.direct_only.final_ev atol=1e-6
+            @test workspace_gas.mixed_enabled.net_ev ≈ comparison_gas.mixed_enabled.net_ev atol=1e-6
         end
 
         @testset "public deep-trading facade spot checks" begin
@@ -2658,6 +2681,13 @@ end
                 ),
                 (
                     protocol_version=2,
+                    request_id="compare-reused",
+                    command="compare_prediction_market_families",
+                    problem=worker_problem,
+                    solve_options=(throw_on_fail=false, pgtol=1e-8, max_iter=5_000, max_fun=10_000, max_doublings=0),
+                ),
+                (
+                    protocol_version=2,
                     request_id="uni",
                     command="solve_prediction_market",
                     mode="direct_only",
@@ -2822,14 +2852,14 @@ end
             response_lines = filter(!isempty, split(chomp(output), '\n'))
             responses = JSON3.read.(response_lines)
 
-            @test length(responses) == 20
+            @test length(responses) == 21
             @test responses[1].ok
             @test responses[1].request_id == "health"
             @test responses[1].result.status == "ok"
             @test String.(collect(responses[1].result.stable_interfaces)) == ["prediction_market_facade", "ndjson_protocol"]
             @test String.(collect(responses[1].result.public_interfaces)) == expected_public_interfaces
             @test responses[1].result.numeric_units == "decimal collateral and outcome token units"
-            @test occursin("stateless NDJSON", String(responses[1].result.execution_model))
+            @test occursin("compatible compare requests reuse a workspace", String(responses[1].result.execution_model))
 
             @test responses[2].ok
             @test responses[2].request_id == "solve"
@@ -2846,89 +2876,96 @@ end
             @test responses[4].request_id == "compare"
             @test responses[4].result.direct_only.mode == "direct_only"
             @test responses[4].result.mixed_enabled.mode == "mixed_enabled"
+            @test responses[4].result.workspace_reused === false
 
             @test responses[5].ok
-            @test responses[5].request_id == "uni"
-            @test responses[5].result.mode == "direct_only"
-            @test responses[5].result.trades[1].market_id == "u1"
-            @test responses[5].result.trades[1].outcome_id == "1"
+            @test responses[5].request_id == "compare-reused"
+            @test responses[5].result.direct_only.mode == "direct_only"
+            @test responses[5].result.mixed_enabled.mode == "mixed_enabled"
+            @test responses[5].result.workspace_reused === true
 
             @test responses[6].ok
-            @test responses[6].request_id == "uncertified-json"
-            @test responses[6].result.status == "uncertified"
-            @test isnothing(responses[6].result.certificate.primal_value)
-            @test isnothing(responses[6].result.certificate.duality_gap)
+            @test responses[6].request_id == "uni"
+            @test responses[6].result.mode == "direct_only"
+            @test responses[6].result.trades[1].market_id == "u1"
+            @test responses[6].result.trades[1].outcome_id == "1"
 
             @test responses[7].ok
-            @test responses[7].request_id == "gas-solve"
-            @test responses[7].result.mode == "direct_only"
-            @test responses[7].result.estimated_execution_cost >= 0.0
-            @test responses[7].result.net_ev <= responses[7].result.final_ev + 1e-12
+            @test responses[7].request_id == "uncertified-json"
+            @test responses[7].result.status == "uncertified"
+            @test isnothing(responses[7].result.certificate.primal_value)
+            @test isnothing(responses[7].result.certificate.duality_gap)
 
-            @test !responses[8].ok
-            @test responses[8].request_id == "wei"
-            @test responses[8].error.code == "invalid_request"
-            @test occursin("decimal-scaled token units", String(responses[8].error.message))
+            @test responses[8].ok
+            @test responses[8].request_id == "gas-solve"
+            @test responses[8].result.mode == "direct_only"
+            @test responses[8].result.estimated_execution_cost >= 0.0
+            @test responses[8].result.net_ev <= responses[8].result.final_ev + 1e-12
 
             @test !responses[9].ok
-            @test responses[9].request_id == "bool"
+            @test responses[9].request_id == "wei"
             @test responses[9].error.code == "invalid_request"
-            @test occursin("numeric, not boolean", String(responses[9].error.message))
+            @test occursin("decimal-scaled token units", String(responses[9].error.message))
 
             @test !responses[10].ok
-            @test responses[10].request_id == "invalid"
+            @test responses[10].request_id == "bool"
             @test responses[10].error.code == "invalid_request"
-            @test occursin("mode must be :direct_only or :mixed_enabled", String(responses[10].error.message))
+            @test occursin("numeric, not boolean", String(responses[10].error.message))
 
             @test !responses[11].ok
-            @test responses[11].request_id == "missing-market-id"
+            @test responses[11].request_id == "invalid"
             @test responses[11].error.code == "invalid_request"
-            @test occursin("problem.markets[1].market_id is required", String(responses[11].error.message))
+            @test occursin("mode must be :direct_only or :mixed_enabled", String(responses[11].error.message))
 
             @test !responses[12].ok
-            @test responses[12].request_id == "missing-band-field"
+            @test responses[12].request_id == "missing-market-id"
             @test responses[12].error.code == "invalid_request"
-            @test occursin("problem.markets[1].bands[1].liquidity_L is required", String(responses[12].error.message))
+            @test occursin("problem.markets[1].market_id is required", String(responses[12].error.message))
 
             @test !responses[13].ok
-            @test responses[13].request_id == "bad-max-iter"
+            @test responses[13].request_id == "missing-band-field"
             @test responses[13].error.code == "invalid_request"
-            @test occursin("solve_options.max_iter must be parseable as Float64", String(responses[13].error.message))
+            @test occursin("problem.markets[1].bands[1].liquidity_L is required", String(responses[13].error.message))
 
             @test !responses[14].ok
-            @test responses[14].request_id == "bad-certify"
+            @test responses[14].request_id == "bad-max-iter"
             @test responses[14].error.code == "invalid_request"
-            @test occursin("solve_options.certify must be boolean", String(responses[14].error.message))
+            @test occursin("solve_options.max_iter must be parseable as Float64", String(responses[14].error.message))
 
             @test !responses[15].ok
-            @test responses[15].request_id == "bad-number"
+            @test responses[15].request_id == "bad-certify"
             @test responses[15].error.code == "invalid_request"
-            @test occursin("problem.collateral_balance must be parseable as Float64", String(responses[15].error.message))
+            @test occursin("solve_options.certify must be boolean", String(responses[15].error.message))
 
             @test !responses[16].ok
-            @test responses[16].request_id == "bad-gas-model"
+            @test responses[16].request_id == "bad-number"
             @test responses[16].error.code == "invalid_request"
-            @test occursin("one cost per problem market", String(responses[16].error.message))
+            @test occursin("problem.collateral_balance must be parseable as Float64", String(responses[16].error.message))
 
             @test !responses[17].ok
-            @test responses[17].request_id == "missing-problem"
+            @test responses[17].request_id == "bad-gas-model"
             @test responses[17].error.code == "invalid_request"
-            @test occursin("problem is required", String(responses[17].error.message))
+            @test occursin("one cost per problem market", String(responses[17].error.message))
 
             @test !responses[18].ok
-            @test responses[18].request_id == "bad-version"
+            @test responses[18].request_id == "missing-problem"
             @test responses[18].error.code == "invalid_request"
-            @test occursin("unsupported protocol_version 3", String(responses[18].error.message))
+            @test occursin("problem is required", String(responses[18].error.message))
 
             @test !responses[19].ok
-            @test responses[19].request_id == "bad-command"
+            @test responses[19].request_id == "bad-version"
             @test responses[19].error.code == "invalid_request"
-            @test occursin("unsupported command: wat", String(responses[19].error.message))
+            @test occursin("unsupported protocol_version 3", String(responses[19].error.message))
 
             @test !responses[20].ok
-            @test responses[20].request_id == "solve-failed"
-            @test responses[20].error.code == "solve_failed"
-            @test occursin("failed certification", String(responses[20].error.message))
+            @test responses[20].request_id == "bad-command"
+            @test responses[20].error.code == "invalid_request"
+            @test occursin("unsupported command: wat", String(responses[20].error.message))
+
+            @test !responses[21].ok
+            @test responses[21].request_id == "solve-failed"
+            @test responses[21].error.code == "solve_failed"
+            @test occursin("failed certification", String(responses[21].error.message))
 
             malformed_response = JSON3.read(String(read(pipeline(IOBuffer("{\n"), cmd), String)))
             @test !malformed_response.ok

@@ -3,7 +3,7 @@
 ForecastFlows exposes two supported dependency boundaries:
 
 - an in-process Julia prediction-market facade
-- a stateless NDJSON worker at `bin/forecastflows-worker.jl`
+- a cached NDJSON worker at `bin/forecastflows-worker.jl`
 
 Once `v2.0.0` is tagged, install the source release with:
 
@@ -96,10 +96,31 @@ Returned data is deliberately abstract:
 It does not include gas pricing, tx grouping, calldata packing, or chain I/O.
 
 If a downstream wants the public facade to penalize route activation, it may
-pass `PredictionMarketFixedGasModel` at solve time. That model is intentionally
-coarse: one cost per direct market edge plus one cost for the split/merge edge.
-It should be treated as a generic sparsity hint, not an exact on-chain
-execution-cost model.
+pass one of two gas models at solve time:
+
+- `PredictionMarketFixedGasModel`: one cost per direct market edge plus one cost
+  for the split/merge edge
+- `PredictionMarketExecutionGasModel`: execution-only additive pricing with
+  separate buy/sell swap costs plus base-and-per-outcome mint/merge costs,
+  scaled into collateral units by `gas_price_native * collateral_per_native`
+
+Both gas models use the same bounded outer fixed-fee wrapper:
+
+1. solve the full problem with the ordinary smooth solver
+2. build an active set from edge execution value versus fixed cost
+3. re-solve the reduced smooth problem from a warm start
+4. allow one stabilization re-solve if the active set flips
+
+This keeps the optimization loop smooth while still exposing gas-aware routing
+through the public API.
+
+`PredictionMarketFixedGasModel` supplies the per-edge fixed costs directly.
+`PredictionMarketExecutionGasModel` is richer: ForecastFlows first solves the
+gas-free problem, infers concrete per-edge buy/sell and mint/merge costs from
+the realized route direction, then runs the fixed-fee wrapper on that
+direction-aware edge-cost vector. Reported `estimated_execution_cost` and
+`net_ev` are always computed from the final solved trades and split/merge plan,
+not from an internal conservative proxy.
 
 ## Repeated solves
 
@@ -107,6 +128,7 @@ For hot loops, ForecastFlows exposes a public qualified workspace API:
 
 - `ForecastFlows.PredictionMarketWorkspace`
 - `ForecastFlows.solve_prediction_market!`
+- `ForecastFlows.compare_prediction_market_families!`
 
 Example:
 
@@ -128,9 +150,10 @@ Workspace reuse requires the same topology:
 - the same market types
 - the same `UniV3` band counts
 
-`compare_prediction_market_families` already reuses one
-`PredictionMarketWorkspace(problem)` internally, so standalone branch solves and
-the compare entrypoint stay aligned on the same public workspace shape.
+`compare_prediction_market_families(problem)` already reuses one
+`PredictionMarketWorkspace(problem)` internally, and
+`compare_prediction_market_families!(workspace, problem)` lets callers keep that
+workspace alive across repeated compatible direct-vs-mixed compares.
 
 ## Liquidity shape
 
@@ -180,7 +203,27 @@ The worker speaks newline-delimited JSON on stdin/stdout.
 - commands: `health`, `solve_prediction_market`, `compare_prediction_market_families`
 - `outcome_id` is the stable outcome reference
 - numeric inputs are decimal collateral/outcome units
-- execution model: stateless NDJSON, one request at a time per worker process
+- execution model: cached NDJSON, one request at a time per worker process
+
+Compare requests may include either no gas model, the legacy fixed-activation
+shape, or the tagged execution-gas union:
+
+```json
+{
+  "kind": "execution_additive",
+  "buy_swap_gas_units": 57542.0,
+  "sell_swap_gas_units": 38099.0,
+  "mint_base_gas_units": 17783.0,
+  "mint_per_outcome_gas_units": 0.0,
+  "merge_base_gas_units": 37370.0,
+  "merge_per_outcome_gas_units": 0.0,
+  "gas_price_native": 1.002325e-12,
+  "collateral_per_native": 3000.0
+}
+```
+
+Worker compare responses also include `workspace_reused` so callers can
+distinguish cold topology setup from steady-state repeated compares.
 
 Example request:
 

@@ -38,6 +38,7 @@
         "UniV3LiquidityBand",
         "UniV3MarketSpec",
         "compare_prediction_market_families",
+        "compare_prediction_market_families!",
         "handle_protocol_json",
         "handle_protocol_request",
         "parse_protocol_request",

@@ -529,6 +529,7 @@ struct CompareResponse{T <: AbstractFloat} <: AbstractProtocolResponse
     request_id::Union{Nothing,String}
     direct_only::PredictionMarketSolveResult{T}
     mixed_enabled::PredictionMarketSolveResult{T}
+    workspace_reused::Bool
 end
 
 """
@@ -685,6 +686,7 @@ StructTypes.lower(resp::CompareResponse) = (
     result=(
         direct_only=StructTypes.lower(resp.direct_only),
         mixed_enabled=StructTypes.lower(resp.mixed_enabled),
+        workspace_reused=resp.workspace_reused,
     ),
 )
 
@@ -1386,7 +1388,8 @@ end
 Run both `:direct_only` and `:mixed_enabled` prediction-market solves under the
 same settings and return `(direct_only=..., mixed_enabled=...)`.
 """
-function compare_prediction_market_families(
+function compare_prediction_market_families!(
+    workspace::PredictionMarketWorkspace{T},
     problem::PredictionMarketProblem{T};
     gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
     certify::Bool=true,
@@ -1395,10 +1398,29 @@ function compare_prediction_market_families(
     solver_options::NamedTuple=(;),
 ) where T
     checked_solver_options = _prediction_market_solver_options(solver_options)
-    workspace = PredictionMarketWorkspace(problem)
     return (
         direct_only=solve_prediction_market!(workspace, problem; mode=:direct_only, gas_model=gas_model, certify=certify, throw_on_fail=throw_on_fail, solver_options=checked_solver_options),
         mixed_enabled=solve_prediction_market!(workspace, problem; mode=:mixed_enabled, gas_model=gas_model, certify=certify, throw_on_fail=throw_on_fail, max_doublings=max_doublings, solver_options=checked_solver_options),
+    )
+end
+
+function compare_prediction_market_families(
+    problem::PredictionMarketProblem{T};
+    gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
+    certify::Bool=true,
+    throw_on_fail::Bool=true,
+    max_doublings::Int=6,
+    solver_options::NamedTuple=(;),
+) where T
+    workspace = PredictionMarketWorkspace(problem)
+    return compare_prediction_market_families!(
+        workspace,
+        problem;
+        gas_model=gas_model,
+        certify=certify,
+        throw_on_fail=throw_on_fail,
+        max_doublings=max_doublings,
+        solver_options=solver_options,
     )
 end
 
@@ -1714,6 +1736,7 @@ function handle_protocol_request(req::HealthRequest)
             "PredictionMarketWorkspace",
             "PredictionMarketFixedGasModel",
             "solve_prediction_market!",
+            "compare_prediction_market_families!",
             "PREDICTION_MARKET_PROTOCOL_VERSION",
             "HealthRequest",
             "SolveRequest",
@@ -1729,7 +1752,7 @@ function handle_protocol_request(req::HealthRequest)
             "serve_protocol",
         ],
         "decimal collateral and outcome token units",
-        "stateless NDJSON; one request at a time per worker process",
+        "cached NDJSON; one request at a time per worker process; compatible compare requests reuse a workspace",
     )
 end
 
@@ -1755,7 +1778,22 @@ function handle_protocol_request(req::CompareRequest{T}) where T
         max_doublings=req.max_doublings,
         solver_options=req.solver_options,
     )
-    return CompareResponse{T}(req.protocol_version, req.request_id, result.direct_only, result.mixed_enabled)
+    return CompareResponse{T}(req.protocol_version, req.request_id, result.direct_only, result.mixed_enabled, false)
+end
+
+function _worker_compare_workspace!(
+    workspace_ref::Base.RefValue{Any},
+    problem::PredictionMarketProblem{T},
+) where T
+    cached = workspace_ref[]
+    if cached isa PredictionMarketWorkspace{T} &&
+        _prediction_market_compatible_layout(getfield(cached, :layout), problem)
+        return cached::PredictionMarketWorkspace{T}, true
+    end
+
+    workspace = PredictionMarketWorkspace(problem)
+    workspace_ref[] = workspace
+    return workspace, false
 end
 
 """
@@ -1775,7 +1813,10 @@ _prediction_market_protocol_error_code(err::Exception) = "internal_error"
 Parse one protocol request line, execute it, and return the rendered JSON
 response string.
 """
-function handle_protocol_json(request::AbstractString)
+function _handle_protocol_json_with_workspace_cache(
+    request::AbstractString,
+    compare_workspace_ref::Base.RefValue{Any},
+)
     request_id = nothing
     try
         payload = try
@@ -1784,7 +1825,27 @@ function handle_protocol_json(request::AbstractString)
             throw(ArgumentError("invalid JSON: $(sprint(showerror, err))"))
         end
         request_id = _prediction_market_protocol_optional_request_id(payload)
-        return render_protocol_response(handle_protocol_request(_parse_protocol_request(payload)))
+        req = _parse_protocol_request(payload)
+        if req isa CompareRequest
+            workspace, workspace_reused = _worker_compare_workspace!(compare_workspace_ref, req.problem)
+            result = compare_prediction_market_families!(
+                workspace,
+                req.problem;
+                gas_model=req.gas_model,
+                certify=req.certify,
+                throw_on_fail=req.throw_on_fail,
+                max_doublings=req.max_doublings,
+                solver_options=req.solver_options,
+            )
+            return render_protocol_response(CompareResponse{typeof(req.problem.collateral_balance)}(
+                req.protocol_version,
+                req.request_id,
+                result.direct_only,
+                result.mixed_enabled,
+                workspace_reused,
+            ))
+        end
+        return render_protocol_response(handle_protocol_request(req))
     catch err
         err isa Union{InterruptException, OutOfMemoryError, StackOverflowError} && rethrow(err)
         return render_protocol_response(ErrorResponse(
@@ -1796,15 +1857,20 @@ function handle_protocol_json(request::AbstractString)
     end
 end
 
+function handle_protocol_json(request::AbstractString)
+    return _handle_protocol_json_with_workspace_cache(request, Ref{Any}(nothing))
+end
+
 """
     serve_protocol(input, output)
 
-Serve the stateless NDJSON worker protocol on `input`/`output`.
+Serve the cached NDJSON worker protocol on `input`/`output`.
 """
 function serve_protocol(input::IO, output::IO)
+    compare_workspace_ref = Ref{Any}(nothing)
     for line in eachline(input)
         isempty(strip(line)) && continue
-        println(output, handle_protocol_json(line))
+        println(output, _handle_protocol_json_with_workspace_cache(line, compare_workspace_ref))
         flush(output)
     end
     return nothing
