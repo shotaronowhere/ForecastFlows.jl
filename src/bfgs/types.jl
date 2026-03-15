@@ -184,7 +184,7 @@ end
     verbose::Bool = true
     logging::Bool = true
     eps_g_norm::Float64 = 1e-6
-    num_threads::Int = Sys.CPU_THREADS
+    num_threads::Union{Nothing,Int} = nothing
     μ::Float64 = 10
     final_print::Bool = true
 end

@@ -143,3 +143,44 @@ Random.seed!(1)
     end
 
 end
+
+@testset "lbfgsb warm start and subset copies" begin
+    s = Solver(
+        flow_objective=EndowmentLinear([1.0, 0.5, 0.5], [1.0, 0.0, 0.0]),
+        edge_objectives=[
+            NonpositiveQuadratic(zeros(2)),
+            NonpositiveQuadratic(zeros(3)),
+        ],
+        edges=Edge[
+            ProductTwoCoin([200.0, 100.0], 1.0, [1, 2]),
+            SplitMergeEdge([1, 2, 3], 2.0),
+        ],
+        n=3,
+    )
+
+    nis = [length(e.Ai) for e in s.edges]
+    bounds = ForecastFlows._lbfgsb_bounds(s, nis)
+    ν0 = [1.2, 0.8, 0.9]
+    η0 = [[1.4, 1.1], [1.3, 1.2, 1.1]]
+    ForecastFlows._initialize_lbfgsb_state!(s, bounds, nis, ν0, η0)
+
+    expected = vcat(
+        ν0,
+        η0[1],
+        η0[2],
+    )
+    @test s.μ0 == expected
+
+    sub = ForecastFlows._subset_solver(s, [1, 2])
+    @test sub.flow_objective !== s.flow_objective
+    @test sub.flow_objective.c !== s.flow_objective.c
+    @test sub.flow_objective.h0 !== s.flow_objective.h0
+    @test sub.edge_objectives[1] !== s.edge_objectives[1]
+    @test sub.edge_objectives[1].a !== s.edge_objectives[1].a
+    @test sub.edge_objectives[1].b !== s.edge_objectives[1].b
+
+    sub.flow_objective.h0[1] = 9.0
+    sub.edge_objectives[1].b[1] = 7.0
+    @test s.flow_objective.h0[1] == 1.0
+    @test s.edge_objectives[1].b[1] == 0.0
+end

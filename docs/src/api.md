@@ -12,6 +12,7 @@ Stable exported facade:
 - `UniV3LiquidityBand`
 - `PredictionMarketTrade`
 - `SplitMergePlan`
+- `PredictionMarketFixedGasModel`
 - `SolveCertificateSummary`
 - `PredictionMarketSolveResult`
 - `solve_prediction_market`
@@ -21,6 +22,7 @@ Stable public qualified APIs:
 
 - `ForecastFlows.PredictionMarketWorkspace`
 - `ForecastFlows.solve_prediction_market!`
+- `ForecastFlows.compare_prediction_market_families!`
 - `ForecastFlows.PREDICTION_MARKET_PROTOCOL_VERSION`
 - `ForecastFlows.HealthRequest`
 - `ForecastFlows.SolveRequest`
@@ -55,6 +57,7 @@ UniV3LiquidityBand
 UniV3MarketSpec
 PredictionMarketTrade
 SplitMergePlan
+PredictionMarketFixedGasModel
 SolveCertificateSummary
 PredictionMarketSolveResult
 solve_prediction_market
@@ -66,6 +69,7 @@ compare_prediction_market_families
 ```@docs
 ForecastFlows.PredictionMarketWorkspace
 ForecastFlows.solve_prediction_market!
+ForecastFlows.compare_prediction_market_families!
 ForecastFlows.PREDICTION_MARKET_PROTOCOL_VERSION
 ForecastFlows.HealthRequest
 ForecastFlows.SolveRequest

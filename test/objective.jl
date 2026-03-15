@@ -32,6 +32,10 @@ end
     obj = Markowitz(μ, Σ)
     @test U(obj, [1.0, 2.0]) ≈ 0.0 atol=obj_tol
 
+    Σmat = [2.0 0.0; 0.0 2.0]
+    obj_mat = Markowitz(μ, Σmat)
+    @test obj_mat isa Markowitz{Float64,Matrix{Float64}}
+
     for _ in 1:5
         ν = rand(2)
         g = similar(ν)

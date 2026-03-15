@@ -1384,10 +1384,12 @@ function solve_prediction_market!(
 end
 
 """
-    compare_prediction_market_families(problem; gas_model=nothing, certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
+    compare_prediction_market_families!(workspace, problem; gas_model=nothing, certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
 
-Run both `:direct_only` and `:mixed_enabled` prediction-market solves under the
-same settings and return `(direct_only=..., mixed_enabled=...)`.
+Advanced repeated-solve entrypoint that runs both `:direct_only` and
+`:mixed_enabled` prediction-market solves with one reusable workspace. The
+workspace must be compatible with `problem` under the same topology rules as
+[`solve_prediction_market!`](@ref).
 """
 function compare_prediction_market_families!(
     workspace::PredictionMarketWorkspace{T},
@@ -1405,6 +1407,14 @@ function compare_prediction_market_families!(
     )
 end
 
+"""
+    compare_prediction_market_families(problem; gas_model=nothing, certify=true, throw_on_fail=true, max_doublings=6, solver_options=(;))
+
+Run both `:direct_only` and `:mixed_enabled` prediction-market solves under the
+same settings and return `(direct_only=..., mixed_enabled=...)`. This is the
+stable stateless facade; use [`compare_prediction_market_families!`](@ref) when
+you want to keep a reusable workspace alive across repeated compatible calls.
+"""
 function compare_prediction_market_families(
     problem::PredictionMarketProblem{T};
     gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
@@ -1808,12 +1818,6 @@ _prediction_market_protocol_error_code(err::ArgumentError) = "invalid_request"
 _prediction_market_protocol_error_code(err::_PredictionMarketSolveFailed) = "solve_failed"
 _prediction_market_protocol_error_code(err::Exception) = "internal_error"
 
-"""
-    handle_protocol_json(request)
-
-Parse one protocol request line, execute it, and return the rendered JSON
-response string. This helper is stateless across calls.
-"""
 function _handle_protocol_json_with_workspace_cache(
     request::AbstractString,
     compare_workspace_ref::Base.RefValue{Any},
@@ -1857,6 +1861,13 @@ function _handle_protocol_json_with_workspace_cache(
     end
 end
 
+"""
+    handle_protocol_json(request)
+
+Parse one protocol request line, execute it, and return the rendered JSON
+response string. This helper is stateless across calls and does not retain any
+workspace cache between requests.
+"""
 function handle_protocol_json(request::AbstractString)
     return _handle_protocol_json_with_workspace_cache(request, Ref{Any}(nothing))
 end
@@ -1865,7 +1876,8 @@ end
     serve_protocol(input, output)
 
 Serve the NDJSON worker protocol on `input`/`output`. Compatible compare
-requests may reuse an internal workspace cache across lines.
+requests may reuse an internal workspace cache across lines. The worker handles
+one request at a time per process.
 """
 function serve_protocol(input::IO, output::IO)
     compare_workspace_ref = Ref{Any}(nothing)

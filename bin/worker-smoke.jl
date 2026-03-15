@@ -4,6 +4,7 @@ using JSON3
 
 const REPO_ROOT = dirname(@__DIR__)
 const WORKER_SCRIPT = joinpath(REPO_ROOT, "bin", "forecastflows-worker.jl")
+const EXPECTED_EXECUTION_MODEL = "NDJSON; one request at a time per worker process; serve_protocol reuses compatible compare workspaces; handle_protocol_json is stateless"
 
 function main()
     cmd = `$(Base.julia_cmd()) --project=$(REPO_ROOT) $(WORKER_SCRIPT)`
@@ -53,7 +54,8 @@ function main()
 
     responses[1].ok || error("worker health request failed: $(responses[1])")
     responses[1].result.status == "ok" || error("worker health status was not ok")
-    occursin("stateless NDJSON", String(responses[1].result.execution_model)) || error("worker execution_model was not the v2 stateless NDJSON contract")
+    String(responses[1].result.execution_model) == EXPECTED_EXECUTION_MODEL ||
+        error("worker execution_model did not match the documented v2 contract")
 
     responses[2].ok || error("worker solve request failed: $(responses[2])")
     responses[2].result.mode == "direct_only" || error("worker solve returned unexpected mode")

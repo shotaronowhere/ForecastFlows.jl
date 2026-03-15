@@ -156,6 +156,14 @@ _solver_objective_eltype(::EndowmentLinear{T}) where T = T
 _solver_objective_eltype(::BasketLiquidation{T}) where T = T
 _solver_objective_eltype(::BasketAcquisition{T}) where T = T
 
+_copy_objective(obj::Objective) = obj
+_copy_objective(obj::NonpositiveQuadratic{T}) where T = NonpositiveQuadratic(copy(obj.b); a=copy(obj.a))
+_copy_objective(obj::Markowitz{T}) where T = Markowitz(copy(obj.μ), obj.Σ isa AbstractArray ? copy(obj.Σ) : obj.Σ)
+_copy_objective(obj::LinearNonnegative{T}) where T = LinearNonnegative(copy(obj.c))
+_copy_objective(obj::EndowmentLinear{T}) where T = EndowmentLinear(copy(obj.c), copy(obj.h0))
+_copy_objective(obj::BasketLiquidation{T}) where T = BasketLiquidation(obj.i, copy(obj.Δin))
+_copy_objective(obj::BasketAcquisition{T}) where T = BasketAcquisition(obj.i, copy(obj.Λout))
+
 _solver_edge_eltype(::Edge{T}) where T = T
 
 function _infer_solver_eltype(
@@ -456,6 +464,7 @@ function _initialize_lbfgsb_state!(
     bounds::AbstractMatrix{T},
     nis::Vector{Int},
     ν0,
+    η0,
 ) where T
     if isnothing(ν0)
         offset = _default_dual_seed_offset(s.flow_objective, T)
@@ -468,7 +477,11 @@ function _initialize_lbfgsb_state!(
     if !s.Vis_zero
         ind = s.n + 1
         for i in 1:s.m
-            s.μ0[ind:ind+nis[i]-1] .= s.μ0[1:s.n][s.edges[i].Ai]
+            if isnothing(η0)
+                s.μ0[ind:ind+nis[i]-1] .= s.μ0[1:s.n][s.edges[i].Ai]
+            else
+                s.μ0[ind:ind+nis[i]-1] .= η0[i]
+            end
             @views s.μ0[ind:ind+nis[i]-1] .= clamp.(s.μ0[ind:ind+nis[i]-1], bounds[2, ind:ind+nis[i]-1], bounds[3, ind:ind+nis[i]-1])
             ind += nis[i]
         end
@@ -500,8 +513,13 @@ function _solve_lbfgsb_once!(
     end
 
     nis = [length(e.Ai) for e in s.edges]
+    if !isnothing(η0)
+        for i in eachindex(η0)
+            length(η0[i]) == nis[i] || throw(ArgumentError("η0[$i] must be of length $(nis[i])"))
+        end
+    end
     bounds = _lbfgsb_bounds(s, nis)
-    _initialize_lbfgsb_state!(s, bounds, nis, ν0)
+    _initialize_lbfgsb_state!(s, bounds, nis, ν0, η0)
 
     function fn(μ::Vector{T})
         s.ν .= μ[1:s.n]
@@ -540,7 +558,8 @@ function _solve_lbfgsb_once!(
 
     find_arb!(s)
     optimizer = L_BFGS_B(size(bounds, 2), max(17, memory))
-    tt = @timed optimizer(
+    solve_time_start = time_ns()
+    _, μ = optimizer(
         fn,
         grad!,
         s.μ0,
@@ -552,8 +571,7 @@ function _solve_lbfgsb_once!(
         maxfun=max_fun,
         maxiter=max_iter,
     )
-    _, μ = tt.value
-    solver_time = tt.time
+    solver_time = (time_ns() - solve_time_start) / 1e9
 
     s.ν .= μ[1:s.n]
     if !s.Vis_zero
@@ -698,7 +716,7 @@ function _solve_bfgs_exact_once!(
         verbose=verbose,
         logging=false,
         eps_g_norm=pgtol,
-        num_threads=Sys.CPU_THREADS,
+        num_threads=nothing,
         final_print=false,
     )
 
@@ -856,9 +874,9 @@ function _finalize_gas_pruning_state!(
 end
 
 function _subset_solver(s::Solver, active_inds::Vector{Int})
-    edge_objectives = isnothing(s.edge_objectives) ? nothing : s.edge_objectives[active_inds]
+    edge_objectives = isnothing(s.edge_objectives) ? nothing : [_copy_objective(s.edge_objectives[i]) for i in active_inds]
     return Solver(
-        flow_objective=s.flow_objective,
+        flow_objective=_copy_objective(s.flow_objective),
         edge_objectives=edge_objectives,
         edges=s.edges[active_inds],
         n=s.n,

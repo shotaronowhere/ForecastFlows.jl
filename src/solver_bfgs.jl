@@ -24,6 +24,10 @@ function problem(;
     obj::Objective,
     edges::Vector{<: Edge}
 )
+    Base.depwarn(
+        "`problem(; obj, edges)` is deprecated; use `Solver(; flow_objective, edges, n)` instead.",
+        :problem,
+    )
     n = length(obj)
     m = length(edges)
 

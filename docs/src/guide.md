@@ -1,6 +1,8 @@
 # User Guide
 
-For generic convex-flow work, use the root solver API:
+For research or internal convex-flow work, the root solver API remains
+available as qualified Julia API, but it is outside the stable prediction-market
+dependency surface:
 
 - construct a `ForecastFlows.Solver` with a flow objective and edge list
 - call `ForecastFlows.solve!`

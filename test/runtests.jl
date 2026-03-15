@@ -1,4 +1,5 @@
 using ForecastFlows
+using Aqua
 using Test
 import ForecastFlows: Objective, grad_Ubar!, lower_limit, upper_limit
 import ForecastFlows: find_arb!, is_nonsmooth
@@ -46,4 +47,14 @@ end
 
 @testset "protocol fixtures" begin
     include("protocol_fixtures.jl")
+end
+
+@testset "Aqua" begin
+    Aqua.test_all(
+        ForecastFlows;
+        deps_compat=(
+            ignore=[:LinearAlgebra, :Printf],
+            check_extras=(ignore=[:Libdl, :Random, :SparseArrays, :Test],),
+        ),
+    )
 end

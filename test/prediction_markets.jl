@@ -54,24 +54,6 @@ function deep_trading_net_expected(case_id::String)
     )
 end
 
-function deep_trading_compatibility_target_net_ev(case_id::String)
-    return if case_id == "heterogeneous_ninety_eight_outcome_l1_like_case"
-        150.3651857457622
-    elseif case_id == "legacy_holdings_direct_only_case"
-        38.862889881900635
-    elseif case_id == "mixed_route_favorable_synthetic_case"
-        100.10782498550209
-    elseif case_id == "ninety_eight_outcome_multitick_direct_only"
-        98.10611206056846
-    elseif case_id == "small_bundle_mixed_case"
-        100.14776321384267
-    elseif case_id == "two_pool_single_tick_direct_only"
-        100.10232463180911
-    else
-        error("missing waterfall target for $case_id")
-    end
-end
-
 deep_trading_compat_opted_in() =
     get(ENV, deep_trading_compat_opt_in_env, get(ENV, legacy_benchmark_opt_in_env, "0")) == "1"
 
@@ -553,14 +535,6 @@ end
 
 price_replay_report(report::ReplayReport, snapshot=dt_benchmark_snapshot) =
     price_execution_groups(replay_execution_groups(report.actions), snapshot)
-
-function deep_trading_compatibility_gas_model(problem::PredictionMarketProblem)
-    direct_buy_cost = price_execution_groups([replay_execution_group(:direct_buy, 1, 0, 1.0, 0.0)]).total_fee
-    direct_sell_cost = price_execution_groups([replay_execution_group(:direct_sell, 0, 1, 0.0, 1.0)]).total_fee
-    split_merge_cost = price_execution_groups([replay_execution_group(:direct_merge, 0, 0, 0.0, 1.0)]).total_fee
-    market_cost = max(direct_buy_cost, direct_sell_cost)
-    return PredictionMarketFixedGasModel(fill(market_cost, length(problem.markets)), split_merge_cost)
-end
 
 function benchmark_best_family(direct_net_ev::Float64, mixed_net_ev::Float64; atol::Float64=1e-12)
     return mixed_net_ev > direct_net_ev + atol ? "mixed" : "direct"
@@ -2382,7 +2356,7 @@ end
             @test workspace_comparison.mixed_enabled.final_ev ≈ comparison.mixed_enabled.final_ev atol=1e-8
             @test workspace_comparison.mixed_enabled.split_merge.mint ≈ comparison.mixed_enabled.split_merge.mint atol=1e-8
 
-            gas_model = deep_trading_compatibility_gas_model(comparison_problem)
+            gas_model = PredictionMarketFixedGasModel(fill(0.01, length(comparison_problem.markets)), 0.03)
             direct_gas = solve_prediction_market(
                 comparison_problem;
                 mode=:direct_only,

@@ -92,9 +92,9 @@ function ∇Ubar!(g, obj::NonpositiveQuadratic{T}, ν) where T
     return nothing
 end
 
-struct Markowitz{T} <: Objective
+struct Markowitz{T,M} <: Objective
     μ::Vector{T}
-    Σ
+    Σ::M
 end
 
 Base.length(obj::Markowitz) = length(obj.μ)

@@ -211,131 +211,138 @@ function solve!(
     state = solver.state
     xk, gk, gnext = state.xk, state.gk, state.gnext
 
-    # --- enable multithreaded BLAS ---
-    BLAS.set_num_threads(options.num_threads)
-
-    # --- Logging ---
-    if options.logging
-        tmp_log = create_temp_log(solver, options.max_iters + 1)
+    previous_blas_threads = nothing
+    if !isnothing(options.num_threads)
+        previous_blas_threads = BLAS.get_num_threads()
+        BLAS.set_num_threads(options.num_threads)
     end
 
-    # --- Print Headers ---
-    format = header_format(solver, options)
-    headers = print_headers(solver, options)
-    iter_fmt = iter_format(solver, options)
-    options.verbose && print_header_bfgs(format, headers)
-
-    # --- Initialize solver ---
-    reset_solver && reset_solver!(solver)
-    if !isnothing(x0) || !isnothing(H0)
-        initialize!(solver, x0=x0, H0=H0)
-    else
-        solver.state.xk .= one(T)
-    end
-
-
-    # *********************
-    # *  main algorithm   *
-    # *********************
-    solve_time_start = time_ns()
-    stalled_steps = 0
-
-    # Compute values at x0
-    solver.obj_val = f∇f!(gk, xk, p)
-    solver.g_norm = norm(gk)
-    time_sec = (time_ns() - solve_time_start) / 1e9
-    options.logging && populate_log!(tmp_log, solver, options, k+1, time_sec, xk)
-    options.verbose && print_iter(
-        iter_fmt, (k, solver.obj_val, solver.g_norm, time_sec)
-    )
-
-    while k < options.max_iters &&
-        (time_ns() - solve_time_start) / 1e9 < options.max_time_sec
-
-        k += 1
-
-        # --- Compute search direction and step ---
-        compute_search_direction!(solver.state)
-        αk = line_search(solver, f∇f!, p, solver.obj_val, gk)
-        
-        #  --- Update state ---
-        update_x!(solver, αk)
-        solver.obj_val = f∇f!(gnext, xk, p)
-        update_gradient!(solver)
-        solver.g_norm = norm(solver.state.gk)
-        
-        # TODO: add barrier?
-
+    try
         # --- Logging ---
+        if options.logging
+            tmp_log = create_temp_log(solver, options.max_iters + 1)
+        end
+
+        # --- Print Headers ---
+        format = header_format(solver, options)
+        headers = print_headers(solver, options)
+        iter_fmt = iter_format(solver, options)
+        options.verbose && print_header_bfgs(format, headers)
+
+        # --- Initialize solver ---
+        reset_solver && reset_solver!(solver)
+        if !isnothing(x0) || !isnothing(H0)
+            initialize!(solver, x0=x0, H0=H0)
+        else
+            solver.state.xk .= one(T)
+        end
+
+
+        # *********************
+        # *  main algorithm   *
+        # *********************
+        solve_time_start = time_ns()
+        stalled_steps = 0
+
+        # Compute values at x0
+        solver.obj_val = f∇f!(gk, xk, p)
+        solver.g_norm = norm(gk)
         time_sec = (time_ns() - solve_time_start) / 1e9
         options.logging && populate_log!(tmp_log, solver, options, k+1, time_sec, xk)
-
-        # --- Printing ---
-        if options.verbose && (k == 1 || k % options.print_iter == 0)
-            print_iter(
-                iter_fmt,
-                (k, solver.obj_val, solver.g_norm, time_sec)
-            )
-        end
-
-        # --- Check convergence ---
-        converged(solver, options) && break
-
-        if αk <= sqrt(eps(T)) || norm(state.sk) <= sqrt(eps(T))
-            stalled_steps += 1
-        else
-            stalled_steps = 0
-        end
-        if stalled_steps >= 3
-            reset_inverse_hessian!(state)
-            stalled_steps = 0
-            continue
-        end
-
-        k == 1 && isnothing(H0) && scale_H0!(state)
-        update_Hk!(state)
-    end
-
-    # --- Print Footer ---
-    solve_time = (time_ns() - solve_time_start) / 1e9
-    if !converged(solver, options)
-        options.verbose && @printf("\nWARNING: did not converge after %d iterations, %6.3fs:", k, solve_time)
-        if k >= options.max_iters
-            options.verbose && @printf(" (max iterations reached)\n")
-            status = :ITERATION_LIMIT
-        elseif (time_ns() - solve_time_start) / 1e9 >= options.max_time_sec
-            options.verbose && @printf(" (max time reached)\n")
-            status = :TIME_LIMIT
-        end
-    else
-        options.verbose && @printf("\nSOLVED in %6.3fs, %d iterations\n", solve_time, k)
-        options.verbose && @printf("Total time: %6.3fs\n", solve_time)
-        status = :OPTIMAL
-    end 
-    options.verbose && print_footer()
-
-    # --- Construct Logs ---
-    if options.logging
-        log = BFGSLog(
-            tmp_log.fx[1:k+1],
-            tmp_log.g_norm[1:k+1],
-            tmp_log.xk[1:k+1],
-            tmp_log.iter_time[1:k+1],
-            k,
-            solve_time
+        options.verbose && print_iter(
+            iter_fmt, (k, solver.obj_val, solver.g_norm, time_sec)
         )
-    else
-        log = BFGSLog(k, solve_time)
+
+        while k < options.max_iters &&
+            (time_ns() - solve_time_start) / 1e9 < options.max_time_sec
+
+            k += 1
+
+            # --- Compute search direction and step ---
+            compute_search_direction!(solver.state)
+            αk = line_search(solver, f∇f!, p, solver.obj_val, gk)
+            
+            #  --- Update state ---
+            update_x!(solver, αk)
+            solver.obj_val = f∇f!(gnext, xk, p)
+            update_gradient!(solver)
+            solver.g_norm = norm(solver.state.gk)
+            
+            # TODO: add barrier?
+
+            # --- Logging ---
+            time_sec = (time_ns() - solve_time_start) / 1e9
+            options.logging && populate_log!(tmp_log, solver, options, k+1, time_sec, xk)
+
+            # --- Printing ---
+            if options.verbose && (k == 1 || k % options.print_iter == 0)
+                print_iter(
+                    iter_fmt,
+                    (k, solver.obj_val, solver.g_norm, time_sec)
+                )
+            end
+
+            # --- Check convergence ---
+            converged(solver, options) && break
+
+            if αk <= sqrt(eps(T)) || norm(state.sk) <= sqrt(eps(T))
+                stalled_steps += 1
+            else
+                stalled_steps = 0
+            end
+            if stalled_steps >= 3
+                reset_inverse_hessian!(state)
+                stalled_steps = 0
+                continue
+            end
+
+            k == 1 && isnothing(H0) && scale_H0!(state)
+            update_Hk!(state)
+        end
+
+        # --- Print Footer ---
+        solve_time = (time_ns() - solve_time_start) / 1e9
+        if !converged(solver, options)
+            options.verbose && @printf("\nWARNING: did not converge after %d iterations, %6.3fs:", k, solve_time)
+            if k >= options.max_iters
+                options.verbose && @printf(" (max iterations reached)\n")
+                status = :ITERATION_LIMIT
+            elseif (time_ns() - solve_time_start) / 1e9 >= options.max_time_sec
+                options.verbose && @printf(" (max time reached)\n")
+                status = :TIME_LIMIT
+            end
+        else
+            options.verbose && @printf("\nSOLVED in %6.3fs, %d iterations\n", solve_time, k)
+            options.verbose && @printf("Total time: %6.3fs\n", solve_time)
+            status = :OPTIMAL
+        end 
+        options.verbose && print_footer()
+
+        # --- Construct Logs ---
+        if options.logging
+            log = BFGSLog(
+                tmp_log.fx[1:k+1],
+                tmp_log.g_norm[1:k+1],
+                tmp_log.xk[1:k+1],
+                tmp_log.iter_time[1:k+1],
+                k,
+                solve_time
+            )
+        else
+            log = BFGSLog(k, solve_time)
+        end
+
+        # --- Construct Solution ---
+        res = BFGSResult(
+            status,
+            solver.obj_val,
+            solver.g_norm,
+            copy(solver.state.xk),
+            log
+        )
+
+        return res
+    finally
+        !isnothing(previous_blas_threads) && BLAS.set_num_threads(previous_blas_threads)
     end
-
-    # --- Construct Solution ---
-    res = BFGSResult(
-        status,
-        solver.obj_val,
-        solver.g_norm,
-        solver.state.xk,
-        log
-    )
-
-    return res
 end

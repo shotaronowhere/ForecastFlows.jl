@@ -9,30 +9,30 @@ function find_arb! end
 is_nonsmooth(::Edge) = false
 
 # Edge with gain function
-struct EdgeGain{T} <: Edge{T}
+struct EdgeGain{T,H} <: Edge{T}
     Ai::Vector{Int}
-    h::Function
+    h::H
     ub::T
 end
 
 # Edge with closed form solution
-struct EdgeClosedForm{T} <: Edge{T}
+struct EdgeClosedForm{T,H,W} <: Edge{T}
     Ai::Vector{Int}
-    h::Function
+    h::H
     ub::T
-    wstar::Function
+    wstar::W
 end
 function Edge(
     inds::Tuple{Int, Int};
-    h::Function,
+    h,
     ub::T,
-    wstar::Union{Function, Nothing}=nothing,
+    wstar=nothing,
 ) where T
     Ai = collect(Int, inds)
 
-    isnothing(wstar) && return EdgeGain{T}(Ai, h, ub)
+    isnothing(wstar) && return EdgeGain(Ai, h, ub)
 
-    return EdgeClosedForm{T}(Ai, h, ub, wstar)
+    return EdgeClosedForm(Ai, h, ub, wstar)
 end
 
 
@@ -50,19 +50,23 @@ function find_arb!(
 end
 
 
-function find_arb!(x::Vector{T}, e::Union{EdgeGain{T}, EdgeClosedForm{T}}, ν::AbstractVector{T}) where {T}
+function find_arb!(x::Vector{T}, e::EdgeGain{T,H}, ν::AbstractVector{T}) where {T,H}
     find_arb!(x, e, ν[1] / ν[2])
 end
 
-function find_arb!(x::Vector{T}, e::EdgeClosedForm{T}, ratio::T) where T
+function find_arb!(x::Vector{T}, e::EdgeClosedForm{T,H,W}, ν::AbstractVector{T}) where {T,H,W}
+    find_arb!(x, e, ν[1] / ν[2])
+end
+
+function find_arb!(x::Vector{T}, e::EdgeClosedForm{T,H,W}, ratio::T) where {T,H,W}
     x[1] = -e.wstar(ratio)
     x[2] = e.h(-x[1])
     return nothing
 end
 
 # let x = (-x₁, h(x₁)) be the solution to h'(x₁) - η₁/η₂ = 0
-# raito = η₁/η₂
-function find_arb!(x::Vector{T}, e::EdgeGain{T}, ratio::T) where T
+# ratio = η₁/η₂
+function find_arb!(x::Vector{T}, e::EdgeGain{T,H}, ratio::T) where {T,H}
     # Truncated Netwon's method
     p_min = ForwardDiff.derivative(e.h, e.ub)
     p_max = ForwardDiff.derivative(e.h, 0.0)

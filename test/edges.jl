@@ -125,9 +125,12 @@ end
         h(w) = 2w - w^2
         dh(w) = 2 - 2w
         wstar(ηrat, ub) = ηrat ≥ 2.0 ? 0.0 : min(1 - ηrat/2, ub)
+        closed_form = w -> wstar(w, ub)
 
         e = Edge((1, 2); h=h, ub=ub)
-        e_closed = Edge((1, 2); h=h, ub=ub, wstar= w -> wstar(w, ub))
+        e_closed = Edge((1, 2); h=h, ub=ub, wstar=closed_form)
+        @test e isa EdgeGain{Float64,typeof(h)}
+        @test e_closed isa EdgeClosedForm{Float64,typeof(h),typeof(closed_form)}
         x = zeros(2)
         xc = zeros(2)
         # ηrat = η1/η2
@@ -165,9 +168,12 @@ end
         h(w) = 3w - 16.0*(log1pexp(0.25 * w) - log(2))
         dh(w) = 3 - 4 * logistic(0.25 * w)
         wstar(ηrat, b) = ηrat ≥ 1.0 ? 0.0 : min(4.0 * log((3.0 - ηrat)/(1.0 + ηrat)), b)
+        closed_form = w -> wstar(w, ub)
         
         e = Edge((1, 2); h=h, ub=ub)
-        e_closed = Edge((1, 2); h=h, ub=ub, wstar= w -> wstar(w, ub))
+        e_closed = Edge((1, 2); h=h, ub=ub, wstar=closed_form)
+        @test e isa EdgeGain{Float64,typeof(h)}
+        @test e_closed isa EdgeClosedForm{Float64,typeof(h),typeof(closed_form)}
 
         x = zeros(2)
         xc = zeros(2)

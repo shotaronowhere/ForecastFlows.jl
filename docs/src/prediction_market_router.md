@@ -99,7 +99,7 @@ including repeated markets that share one `outcome_id`.
 For Rust or other non-Julia drivers, use the worker:
 
 ```bash
-julia --project bin/forecastflows-worker.jl
+julia --project=. bin/forecastflows-worker.jl
 ```
 
 The worker uses newline-delimited JSON with `protocol_version = 2` and supports:
@@ -156,7 +156,7 @@ FORECASTFLOWS_RUN_DEEPTRADING_COMPAT=1 julia --project -e 'using Pkg; Pkg.test()
 Run the full manual release gate with:
 
 ```bash
-julia --project bin/release-check.jl
+julia --project=. bin/release-check.jl
 ```
 
 ## Known Limitations

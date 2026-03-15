@@ -96,15 +96,11 @@ Returned data is deliberately abstract:
 It does not include gas pricing, tx grouping, calldata packing, or chain I/O.
 
 If a downstream wants the public facade to penalize route activation, it may
-pass one of two gas models at solve time:
+pass `PredictionMarketFixedGasModel` at solve time:
 
-- `PredictionMarketFixedGasModel`: one cost per direct market edge plus one cost
-  for the split/merge edge
-- `PredictionMarketExecutionGasModel`: execution-only additive pricing with
-  separate buy/sell swap costs plus base-and-per-outcome mint/merge costs,
-  scaled into collateral units by `gas_price_native * collateral_per_native`
+- one cost per direct market edge plus one cost for the split/merge edge
 
-Both gas models use the same bounded outer fixed-fee wrapper:
+The public gas-aware solve uses a bounded outer fixed-fee wrapper:
 
 1. solve the full problem with the ordinary smooth solver
 2. build an active set from edge execution value versus fixed cost
@@ -115,12 +111,12 @@ This keeps the optimization loop smooth while still exposing gas-aware routing
 through the public API.
 
 `PredictionMarketFixedGasModel` supplies the per-edge fixed costs directly.
-`PredictionMarketExecutionGasModel` is richer: ForecastFlows first solves the
-gas-free problem, infers concrete per-edge buy/sell and mint/merge costs from
-the realized route direction, then runs the fixed-fee wrapper on that
-direction-aware edge-cost vector. Reported `estimated_execution_cost` and
-`net_ev` are always computed from the final solved trades and split/merge plan,
-not from an internal conservative proxy.
+More detailed execution gas schedules, native-token pricing, calldata packing,
+and tx grouping should stay in the external driver layer. For Deep-Trading-style
+consumers that already replay routes and prune by exact executable net EV
+downstream, the recommended boundary is to omit `gas_model` entirely and treat
+`estimated_execution_cost` / `net_ev` as optional diagnostics rather than as a
+selection contract.
 
 ## Repeated solves
 
@@ -208,20 +204,21 @@ The worker speaks newline-delimited JSON on stdin/stdout.
   reuses compatible compare workspaces internally, while
   `handle_protocol_json` remains stateless
 
-Compare requests may include either no gas model, the legacy fixed-activation
-shape, or the tagged execution-gas union:
+Recommended downstream pattern:
+
+- one long-lived worker per process or shard
+- one in-flight request per worker
+- driver-owned timeout, restart, and schema-validation policy
+
+Compare requests may omit `gas_model` entirely; that is the recommended shape
+for external drivers that own fee replay and executable net-EV ranking. The
+optional fixed-activation gas shape is available only for callers that
+intentionally want Julia-side fixed-fee pruning:
 
 ```json
 {
-  "kind": "execution_additive",
-  "buy_swap_gas_units": 57542.0,
-  "sell_swap_gas_units": 38099.0,
-  "mint_base_gas_units": 17783.0,
-  "mint_per_outcome_gas_units": 0.0,
-  "merge_base_gas_units": 37370.0,
-  "merge_per_outcome_gas_units": 0.0,
-  "gas_price_native": 1.002325e-12,
-  "collateral_per_native": 3000.0
+  "market_action_costs": [0.01, 0.02],
+  "split_merge_action_cost": 0.03
 }
 ```
 
@@ -319,7 +316,7 @@ latency matters enough to justify a Julia deployment artifact.
 If you build it, run the worker with:
 
 ```bash
-julia --project -J build/forecastflows-worker.<dlext> bin/forecastflows-worker.jl
+julia --project=. -J build/forecastflows-worker.<dlext> bin/forecastflows-worker.jl
 ```
 
 The helper writes the sysimage under `build/` and prints the exact path. The
@@ -330,8 +327,9 @@ extension is `.so` on Linux and `.dylib` on macOS.
 The reproducible manual release gate for v2 is:
 
 ```bash
-julia --project bin/release-check.jl
+julia --project=. bin/release-check.jl
 ```
 
-That script runs the default tests, the standalone worker smoke script, the docs
+That script runs the release-boundary checks, the default tests, the standalone
+worker smoke script, the informational latency smoke, docs instantiate, docs
 build, and the opt-in Deep-Trading benchmark sweep.

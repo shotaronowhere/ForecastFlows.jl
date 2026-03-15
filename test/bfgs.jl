@@ -71,3 +71,22 @@ end
     ForecastFlows.update_Hk!(state)
     @test state.ind[1] == 3
 end
+
+@testset "result ownership and BLAS restore" begin
+    function f∇f!(g, x, _)
+        g .= x
+        return sum(abs2, x) / 2
+    end
+
+    solver = BFGSSolver(2)
+    options_threads = BFGSOptions(verbose=false, final_print=false, logging=false, num_threads=1)
+    original_threads = BLAS.get_num_threads()
+
+    res1 = solve!(solver, f∇f!, nothing; options=options_threads, x0=[1.0, 2.0])
+    snapshot = copy(res1.x)
+    solve!(solver, f∇f!, nothing; options=options_threads, x0=[3.0, 4.0])
+
+    @test res1.x == snapshot
+    @test res1.x !== solver.state.xk
+    @test BLAS.get_num_threads() == original_threads
+end

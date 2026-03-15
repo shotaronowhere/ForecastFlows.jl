@@ -46,6 +46,7 @@ The advanced repeated-solve Julia API is available by qualified access:
 
 - `ForecastFlows.PredictionMarketWorkspace`
 - `ForecastFlows.solve_prediction_market!`
+- `ForecastFlows.compare_prediction_market_families!`
 
 ## Dependency quickstart
 
@@ -97,7 +98,7 @@ doublings, the facade and worker return a solve failure unless you explicitly se
 Or run the worker and call it from Rust or another driver:
 
 ```bash
-julia --project bin/forecastflows-worker.jl
+julia --project=. bin/forecastflows-worker.jl
 ```
 
 Worker requests are newline-delimited JSON with `protocol_version = 2`. The
@@ -112,6 +113,12 @@ worker returns:
 
 Worker numeric inputs must be decimal-scaled token units, not raw wei or other
 base-unit integers.
+
+Recommended downstream worker pattern:
+
+- one long-lived worker per process or shard
+- one in-flight request per worker
+- driver-owned timeout, restart, schema-validation, and supervision policy
 
 For `UniV3`-style liquidity, the preferred external representation is a list of
 bands:
@@ -217,13 +224,16 @@ FORECASTFLOWS_RUN_DEEPTRADING_COMPAT=1 julia --project -e 'using Pkg; Pkg.test()
 Run the full v2 release gate:
 
 ```bash
-julia --project bin/release-check.jl
+julia --project=. bin/release-check.jl
 ```
 
 This runs:
 
+- the release boundary checks
 - the default test suite
 - the worker smoke script
+- the informational latency smoke
+- the docs instantiate step
 - the docs build
 - the opt-in Deep-Trading benchmark sweep
 
@@ -263,7 +273,7 @@ julia --project=docs docs/make.jl
 For lower worker cold-start, use:
 
 ```bash
-julia --project bin/build-worker-sysimage.jl
+julia --project=. bin/build-worker-sysimage.jl
 ```
 
 The helper writes the sysimage under `build/` and prints the full output path.
@@ -272,7 +282,7 @@ On Linux the extension is `.so`; on macOS it is `.dylib`.
 Then start the worker with the generated sysimage path:
 
 ```bash
-julia --project -J build/forecastflows-worker.<dlext> bin/forecastflows-worker.jl
+julia --project=. -J build/forecastflows-worker.<dlext> bin/forecastflows-worker.jl
 ```
 
 This helper is optional and kept outside the default runtime path.
