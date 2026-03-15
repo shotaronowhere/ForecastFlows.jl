@@ -136,7 +136,9 @@ multiple markets may share the same `outcome_id` when several venues exist for
 one outcome. Concentrated-liquidity boundaries are handled inside the `UniV3`
 edge model; once a side is exhausted, that edge simply contributes no further
 flow. When a venue has a hard terminal price boundary, represent it with one
-optional final `bands` entry whose `liquidity_L` is `0.0`.
+optional final `bands` entry whose `liquidity_L` is `0.0`. Interior zero-
+liquidity gaps are also supported when the ladder ends with that final terminal
+band. `fee_multiplier` must lie in `(0, 1]`.
 
 If `markets=[]`, `mode=:direct_only` returns the trivial no-trade route.
 `mode=:mixed_enabled` remains valid because the split/merge hyperedge is still a

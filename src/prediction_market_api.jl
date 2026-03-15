@@ -48,8 +48,9 @@ end
 User-facing liquidity band for the `UniV3MarketSpec` facade. `lower_price` is
 the outcome price at the top of the band, and `liquidity_L` is the standard
 Uniswap-style liquidity parameter `L`, not the internal reserve-product `L^2`
-used by the low-level `UniV3` edge. `liquidity_L = 0` is allowed only for one
-optional final band that marks a hard exhausted-liquidity boundary.
+used by the low-level `UniV3` edge. Zero-liquidity bands encode exhausted
+intervals; if a ladder contains an interior zero-liquidity gap, it must also
+end with a zero-liquidity terminal band.
 """
 struct UniV3LiquidityBand{T <: AbstractFloat}
     lower_price::T
@@ -124,10 +125,11 @@ Pure-data description of a multi-band collateral/outcome market under the
 package `UniV3` edge model.
 
 The stable user-facing constructor accepts `bands::Vector{UniV3LiquidityBand}`
-in any order. At least one band must have positive liquidity; a terminal
-zero-liquidity band may be used to encode a hard price boundary. `bands` is the
-stable public shape; the normalized `lower_ticks` / `liquidity_k` storage is an
-internal implementation detail.
+in any order. At least one band must have positive liquidity; zero-liquidity
+bands may encode gaps, and any such gapped ladder must end with a
+zero-liquidity terminal band. `bands` is the stable public shape; the
+normalized `lower_ticks` / `liquidity_k` storage is an internal implementation
+detail.
 """
 struct UniV3MarketSpec{T <: AbstractFloat} <: AbstractPredictionMarketSpec{T}
     market_id::String
@@ -170,9 +172,11 @@ end
 function _prediction_market_univ3_internal_liquidity_k(liquidity_k::Vector{T}) where T
     isempty(liquidity_k) && return T[]
     if iszero(last(liquidity_k))
-        return vcat(T[liquidity_k[i] for i in length(liquidity_k)-1:-1:1], T[last(liquidity_k)])
+        ret = reverse(liquidity_k[1:end-1])
+        push!(ret, last(liquidity_k))
+        return ret
     end
-    return T[liquidity_k[i] for i in length(liquidity_k):-1:1]
+    return reverse(liquidity_k)
 end
 
 function _prediction_market_validate_public_univ3(
@@ -199,9 +203,8 @@ function UniV3MarketSpec(
     any(band -> band.liquidity_L > 0, bands) || throw(ArgumentError("bands must contain at least one positive-liquidity band"))
     sorted_bands = sort(collect(bands); by=band -> band.lower_price, rev=true)
     zero_band_inds = findall(band -> iszero(band.liquidity_L), sorted_bands)
-    length(zero_band_inds) <= 1 || throw(ArgumentError("bands may contain at most one zero-liquidity terminal band"))
-    !isempty(zero_band_inds) && only(zero_band_inds) != length(sorted_bands) &&
-        throw(ArgumentError("zero-liquidity band must be the final band"))
+    !isempty(zero_band_inds) && last(zero_band_inds) != length(sorted_bands) &&
+        throw(ArgumentError("zero-liquidity gaps require a final zero-liquidity terminal band"))
     lower_prices = [band.lower_price for band in sorted_bands]
     liquidity_k = [band.liquidity_L^2 for band in sorted_bands]
     T = Float64

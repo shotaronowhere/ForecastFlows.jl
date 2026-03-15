@@ -56,6 +56,10 @@ The public facade now converts documented outcome prices into the internal recip
 - liquidity is permuted to match the reversed active-band order
 - if a public band ladder ends with a zero-liquidity terminal band, that terminal slot
   stays at the end while the active bands are reversed
+- interior zero-liquidity gaps are preserved when the ladder is explicitly terminated
+- public and low-level `UniV3` constructors now reject fee multipliers outside `(0, 1]`
+- low-level `UniV3` construction now promotes mixed or integer real inputs to a stable
+  floating-point edge type before validating or solving
 
 This keeps the public JSON/API contract stable while making the constructed low-level
 edge identical to the intended market.

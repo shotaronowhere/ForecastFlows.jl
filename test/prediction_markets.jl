@@ -1684,6 +1684,41 @@ end
             ForecastFlows.find_arb!(x_internal, internal_edge, [1.0, public_spec.fee_multiplier * target])
             @test x_public ≈ x_internal atol=1e-10
         end
+
+        gapped_spec = UniV3MarketSpec(
+            "u_gap",
+            "YES",
+            0.8,
+            [
+                UniV3LiquidityBand(1.0, 5.0),
+                UniV3LiquidityBand(0.75, 0.0),
+                UniV3LiquidityBand(0.5, 8.0),
+                UniV3LiquidityBand(0.25, 0.0),
+            ],
+            0.999,
+        )
+        gapped_edge = ForecastFlows._build_prediction_market_edge(gapped_spec, 1)
+        gapped_internal = UniV3(
+            inv(0.8),
+            [inv(0.25), inv(0.5), inv(0.75), inv(1.0)],
+            [64.0, 0.0, 25.0, 0.0],
+            0.999,
+            [1, 2],
+        )
+
+        @test gapped_edge.lower_ticks == gapped_internal.lower_ticks
+        @test gapped_edge.liquidity == gapped_internal.liquidity
+
+        x_public_gap = zeros(2)
+        x_internal_gap = zeros(2)
+        for target in (0.9, 0.6, 0.4)
+            η = target > gapped_spec.current_price ?
+                [1.0, target / gapped_spec.fee_multiplier] :
+                [1.0, gapped_spec.fee_multiplier * target]
+            ForecastFlows.find_arb!(x_public_gap, gapped_edge, η)
+            ForecastFlows.find_arb!(x_internal_gap, gapped_internal, η)
+            @test x_public_gap ≈ x_internal_gap atol=1e-10
+        end
     end
 
     @testset "public prediction-market facade" begin
@@ -1715,7 +1750,16 @@ end
             @test_throws MethodError UniV3MarketSpec("u1", "YES", 1.0, [0.5, 1.0], [100.0, 100.0], 0.997)
             @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.5, [UniV3LiquidityBand(1.0, 0.0)], 0.997)
             @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.75, [UniV3LiquidityBand(1.0, 0.0), UniV3LiquidityBand(0.5, 10.0)], 0.997)
-            @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.75, [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0), UniV3LiquidityBand(0.25, 0.0)], 0.997)
+            @test_throws ArgumentError UniV3MarketSpec(
+                "u_gap",
+                "YES",
+                0.75,
+                [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.75, 0.0), UniV3LiquidityBand(0.5, 5.0)],
+                0.997,
+            )
+            @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.75, [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0)], 0.0)
+            @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.75, [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0)], 1.1)
+            @test_throws ArgumentError UniV3MarketSpec("u1", "YES", 0.75, [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0)], -0.1)
             @test_throws MethodError PredictionMarketProblem(
                 [0.5, 0.5],
                 1.0,
@@ -2242,13 +2286,24 @@ end
                 [UniV3LiquidityBand(1.0, 0.0), UniV3LiquidityBand(0.5, 10.0)],
                 1.0,
             )
-            @test_throws ArgumentError UniV3MarketSpec(
-                "u_bad_double_zero",
+            gapped_boundary = UniV3MarketSpec(
+                "u_gap",
                 "YES",
-                0.75,
-                [UniV3LiquidityBand(1.0, 10.0), UniV3LiquidityBand(0.5, 0.0), UniV3LiquidityBand(0.25, 0.0)],
-                1.0,
+                0.8,
+                [
+                    UniV3LiquidityBand(1.0, 5.0),
+                    UniV3LiquidityBand(0.75, 0.0),
+                    UniV3LiquidityBand(0.5, 8.0),
+                    UniV3LiquidityBand(0.25, 0.0),
+                ],
+                0.999,
             )
+            @test gapped_boundary.bands == [
+                UniV3LiquidityBand(1.0, 5.0),
+                UniV3LiquidityBand(0.75, 0.0),
+                UniV3LiquidityBand(0.5, 8.0),
+                UniV3LiquidityBand(0.25, 0.0),
+            ]
         end
 
         @testset "public UniV3 outcome-price direct buy regression" begin
@@ -2624,7 +2679,7 @@ end
             ))))
             @test !interior_zero_band_response.ok
             @test interior_zero_band_response.error.code == "invalid_request"
-            @test occursin("zero-liquidity band must be the final band", String(interior_zero_band_response.error.message))
+            @test occursin("zero-liquidity gaps require a final zero-liquidity terminal band", String(interior_zero_band_response.error.message))
 
             duplicate_zero_band_response = JSON3.read(ForecastFlows.handle_protocol_json(JSON3.write((
                 protocol_version=2,
@@ -2648,9 +2703,8 @@ end
                     )],
                 ),
             ))))
-            @test !duplicate_zero_band_response.ok
-            @test duplicate_zero_band_response.error.code == "invalid_request"
-            @test occursin("at most one zero-liquidity terminal band", String(duplicate_zero_band_response.error.message))
+            @test duplicate_zero_band_response.ok
+            @test duplicate_zero_band_response.result.status == "certified"
 
             worker_script = joinpath(dirname(@__DIR__), "bin", "forecastflows-worker.jl")
             cmd = `$(Base.julia_cmd()) --project=$(dirname(@__DIR__)) $(worker_script)`

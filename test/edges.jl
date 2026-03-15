@@ -241,8 +241,28 @@ end
     end
 
     @testset "univ3 validation" begin
+        e_int = UniV3(1, [2, 1], [100, 0], 0.997, [1, 2])
+        @test e_int isa UniV3{Float64}
+        @test e_int.current_price == 1.0
+        @test e_int.lower_ticks == [2.0, 1.0]
+        @test e_int.liquidity == [100.0, 0.0]
+
+        x = zeros(2)
+        η = [1.4, 1.0]
+        find_arb!(x, e_int, η)
+        expected = reference_univ3_flow(1.0, [2.0, 1.0], [100.0, 0.0], 0.997, η)
+        @test x ≈ expected atol=edge_tol
+
         @test_throws ArgumentError UniV3(1.0, [0.5, 1.0], [100.0, 100.0], 0.997, [1, 2])
         @test_throws ArgumentError UniV3(3.0, [2.0, 1.0], [100.0, 0.0], 0.997, [1, 2])
         @test_throws ArgumentError UniV3(1.0, [2.0, 1.0], [100.0], 0.997, [1, 2])
+        @test_throws ArgumentError UniV3(1.0, Float64[], Float64[], 0.997, [1, 2])
+        @test_throws ArgumentError UniV3(1.0, [2.0, 1.0], [100.0, 0.0], 0.0, [1, 2])
+        @test_throws ArgumentError UniV3(1.0, [2.0, 1.0], [100.0, 0.0], 1.1, [1, 2])
+        @test_throws ArgumentError UniV3(1.0, [2.0, 1.0], [100.0, 0.0], -0.1, [1, 2])
+        @test_throws ArgumentError UniV3(NaN, [2.0, 1.0], [100.0, 0.0], 0.997, [1, 2])
+        @test_throws ArgumentError UniV3(1.0, [Inf, 1.0], [100.0, 0.0], 0.997, [1, 2])
+        @test_throws ArgumentError UniV3(1.0, [2.0, 1.0], [Inf, 0.0], 0.997, [1, 2])
+        @test_throws ArgumentError UniV3(1.0, [2.0, 1.0], [100.0, 0.0], NaN, [1, 2])
     end
 end

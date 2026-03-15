@@ -180,9 +180,10 @@ Each band is:
 - `lower_price`: the outcome price at the top of the band
 - `liquidity_L`: the standard Uniswap-style liquidity parameter `L`
 
-`liquidity_L = 0` is allowed only for one optional final band that marks a hard
-exhausted-liquidity boundary while keeping the request on the stable public
-`bands` representation.
+`liquidity_L = 0` may be used for interior exhausted-liquidity gaps, but any
+such gapped ladder must also end with a zero-liquidity terminal band. That
+final band marks the hard exhausted-liquidity boundary while keeping the
+request on the stable public `bands` representation.
 
 `PredictionMarketProblem` may omit direct markets for some outcomes, and it may
 include multiple direct markets with the same `outcome_id`. Omitted markets mean
