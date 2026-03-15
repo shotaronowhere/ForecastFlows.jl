@@ -1,13 +1,14 @@
 #=
 # Market Clearing
-This example uses `ConvexFlows` to solve a market clearing problem
+This example uses `ForecastFlows` to solve a market clearing problem
 =#
 
-using ConvexFlows
+using ForecastFlows
+import ForecastFlows: Edge, Objective, BFGSOptions, problem, solve!
 using Random, LinearAlgebra, SparseArrays
 using Plots, LogExpFunctions
 
-const CF = ConvexFlows
+const CF = ForecastFlows
 
 #=
 ## Generating the problem data

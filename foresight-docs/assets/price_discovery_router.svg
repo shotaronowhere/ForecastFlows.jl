@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 286" width="920" height="286" role="img" aria-labelledby="title desc">
+  <title id="title">Price discovery coordinates venues</title>
+  <desc id="desc">A central price vector sits in the middle of four venue nodes. Blue arrows send prices out to the venues, dashed warm arrows bring back each venue's best local trade, and a light outer loop indicates repeated updates until the answers are consistent.</desc>
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .center { fill: none; stroke: #2c2c2c; stroke-width: 2; stroke-dasharray: 5 5; }
+      .venue { fill: none; stroke: #2c2c2c; stroke-width: 2; }
+      .out { fill: none; stroke: #587ea3; stroke-width: 2.4; stroke-linecap: round; }
+      .back { fill: none; stroke: #b56a4f; stroke-width: 2; stroke-dasharray: 5 5; stroke-linecap: round; }
+      .loop { fill: none; stroke: #9aa1ab; stroke-width: 1.6; stroke-dasharray: 4 5; }
+      .title { font: 600 18px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .hint { font: 500 12px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #6a7280; }
+      .label { font: 600 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .nodeText { font: 600 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; text-anchor: middle; dominant-baseline: middle; }
+    </style>
+    <marker id="blueArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#587ea3" />
+    </marker>
+    <marker id="warmArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b56a4f" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="920" height="286" />
+
+  <text class="title" x="460" y="32" text-anchor="middle">PRICE DISCOVERY LOOP</text>
+  <text class="hint" x="460" y="54" text-anchor="middle">one internal price vector, many local venue oracles</text>
+
+  <ellipse class="loop" cx="460" cy="150" rx="324" ry="104" />
+  <text class="hint" x="460" y="254" text-anchor="middle">repeat until local answers are consistent</text>
+
+  <rect class="center" x="366" y="116" width="188" height="52" rx="8" />
+  <text class="label" x="460" y="136" text-anchor="middle">[Pc, P1, ..., PN]</text>
+  <text class="hint" x="460" y="154" text-anchor="middle">internal prices</text>
+
+  <circle class="venue" cx="252" cy="96" r="28" />
+  <text class="nodeText" x="252" y="96">AMM1</text>
+
+  <circle class="venue" cx="252" cy="202" r="28" />
+  <text class="nodeText" x="252" y="202">AMM2</text>
+
+  <circle class="venue" cx="668" cy="96" r="28" />
+  <text class="nodeText" x="668" y="96">AMMk</text>
+
+  <rect class="venue" x="610" y="180" width="116" height="44" rx="4" />
+  <text class="nodeText" x="668" y="202">split/merge</text>
+
+  <path class="out" d="M404 120 L278 102" marker-end="url(#blueArrow)" />
+  <path class="out" d="M404 164 L278 196" marker-end="url(#blueArrow)" />
+  <path class="out" d="M516 120 L642 102" marker-end="url(#blueArrow)" />
+  <path class="out" d="M516 164 L610 194" marker-end="url(#blueArrow)" />
+
+  <path class="back" d="M280 84 L404 112" marker-end="url(#warmArrow)" />
+  <path class="back" d="M280 208 L404 172" marker-end="url(#warmArrow)" />
+  <path class="back" d="M640 84 L516 112" marker-end="url(#warmArrow)" />
+  <path class="back" d="M610 208 L516 172" marker-end="url(#warmArrow)" />
+
+  <line class="out" x1="304" y1="258" x2="356" y2="258" marker-end="url(#blueArrow)" />
+  <text class="hint" x="404" y="262">prices</text>
+
+  <line class="back" x1="494" y1="258" x2="546" y2="258" marker-end="url(#warmArrow)" />
+  <text class="hint" x="646" y="262">best local trade</text>
+</svg>

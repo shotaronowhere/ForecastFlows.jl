@@ -1,0 +1,28 @@
+{
+  "protocol_version": 2,
+  "request_id": "solve-direct-fixture",
+  "ok": true,
+  "command": "solve_prediction_market",
+  "result": {
+    "status": "certified",
+    "mode": "direct_only",
+    "certificate": {
+      "passed": true,
+      "message": "certified"
+    },
+    "outcome_ids": [
+      "1",
+      "2"
+    ],
+    "trades": [
+      {
+        "market_id": "m1",
+        "outcome_id": "1"
+      }
+    ],
+    "split_merge": {
+      "mint": 0.0,
+      "merge": 0.0
+    }
+  }
+}

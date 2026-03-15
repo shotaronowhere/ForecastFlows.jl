@@ -1,4 +1,4 @@
-using ConvexFlows
+using ForecastFlows
 using Documenter
 using Literate
 
@@ -15,7 +15,7 @@ fix_math_md(content) = replace(content, r"\$\$(.*?)\$\$"s => s"```math\1```")
 fix_suffix(filename) = replace(filename, ".jl" => ".md")
 function postprocess(content)
       """
-      The source files for all examples can be found in [/examples](https://github.com/tjdiamandis/ConvexFlows.jl/tree/main/examples).
+      The source files for all examples can be found in [/examples](https://github.com/shotaronowhere/ForecastFlows.jl/tree/main/examples).
       """ * content
 end
 
@@ -50,17 +50,23 @@ end
 advanced_nav = fix_suffix.(joinpath.("advanced", readdir(joinpath(@__DIR__, "../examples/advanced"))))
 
 makedocs(;
-    modules=[ConvexFlows],
-    authors="Theo Diamandis",
-    repo="https://github.com/tjdiamandis/ConvexFlows.jl/blob/{commit}{path}#L{line}",
-    sitename="ConvexFlows.jl",
+    modules=[ForecastFlows],
+    checkdocs=:public,
+    authors="Theo Diamandis and ForecastFlows contributors",
+    repo="https://github.com/shotaronowhere/ForecastFlows.jl/blob/{commit}{path}#L{line}",
+    sitename="ForecastFlows.jl",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
-        canonical="https://tjdiamandis.github.io/ConvexFlows.jl",
+        canonical="https://shotaronowhere.github.io/ForecastFlows.jl",
+        repolink="https://github.com/shotaronowhere/ForecastFlows.jl",
         assets=String[],
     ),
     pages=[
         "Home" => "index.md",
+        "Prediction Market Router" => "prediction_market_router.md",
+        "Integration Guide" => "integration.md",
+        "Architecture" => "architecture.md",
+        "Migration v2" => "migration_v2.md",
         "Examples" => examples_nav,
         "Advanced Usage" => advanced_nav,
         "User Guide" => "guide.md",
@@ -70,6 +76,6 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/tjdiamandis/ConvexFlows.jl",
+    repo="github.com/shotaronowhere/ForecastFlows.jl",
     devbranch = "main"
 )

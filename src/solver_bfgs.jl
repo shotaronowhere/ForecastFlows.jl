@@ -12,11 +12,22 @@ struct ConvexFlowProblemTwoNode{
     m::Int
 end
 
+"""
+    problem(; obj, edges)
+
+Legacy two-node helper interface retained for compatibility with the original
+`ConvexFlows` examples. New routing code should use the root `Solver` API
+instead.
+"""
 # TODO: In all these places, should edges be typed?
 function problem(;
     obj::Objective,
     edges::Vector{<: Edge}
 )
+    Base.depwarn(
+        "`problem(; obj, edges)` is deprecated; use `Solver(; flow_objective, edges, n)` instead.",
+        :problem,
+    )
     n = length(obj)
     m = length(edges)
 
@@ -82,7 +93,7 @@ function solve!(
 end
 
 
-function netflows(xs, edges, n) where T
+function netflows(xs, edges, n)
     ret = zeros(n)
     for (x, e) in zip(xs, edges)
         ret[e.Ai[1]] += x[1]

@@ -1,6 +1,6 @@
 #=
 # Optimal Power Flow
-This example uses `ConvexFlows` to solve am optimal power flow problem.
+This example uses `ForecastFlows` to solve am optimal power flow problem.
 
 The optimal power flow problem seeks a cost-minimizing plan 
 to generate power satisfying demand in each region. We consider a network of $m$ 
@@ -31,14 +31,15 @@ optimizations.
 
 =#
 
-using ConvexFlows
+using ForecastFlows
+import ForecastFlows: Edge, Objective, NonpositiveQuadratic, Solver, problem, solve!
 using Random, LinearAlgebra, SparseArrays
 using Plots, LogExpFunctions, StatsBase
 using Graphs: Graph, connected_components
 import GraphPlot
 import Cairo
 
-const CF = ConvexFlows
+const CF = ForecastFlows
 const GP = GraphPlot
 
 
@@ -210,11 +211,11 @@ end
 QuadraticPowerCost(d::Vector{T}) where T = QuadraticPowerCost(length(d), d)
 
 
-function U(obj::QuadraticPowerCost{T}, y) where T
+function CF.U(obj::QuadraticPowerCost{T}, y) where T
     return -0.5*sum(x->abs2(max(x, zero(T))), obj.d - y)
 end
 
-function grad_U(obj::QuadraticPowerCost{T}, y) where T
+function CF.grad_U(obj::QuadraticPowerCost{T}, y) where T
     return obj.d - y
 end
 
@@ -245,7 +246,7 @@ for line in lines
 end
 
 #=
-### Solve with ConvexFlows.jl
+### Solve with ForecastFlows.jl
 =#
 s = Solver(
     flow_objective=Uy,

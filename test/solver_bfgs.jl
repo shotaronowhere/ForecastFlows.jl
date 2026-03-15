@@ -18,7 +18,7 @@ Random.seed!(1)
         push!(lines, Edge((j, i); h=h, ub=1.0))
     end
     
-    prob = problem(obj=obj, edges=lines)
+    prob = @test_deprecated problem(obj=obj, edges=lines)
     result = solve!(prob; options=BFGSOptions(verbose=false, final_print=false))
     
     tol = 1e-6

@@ -1,4 +1,4 @@
-function is_optimal(result::ConvexFlows.BFGSResult; eps_g_norm=1e-6)
+function is_optimal(result::ForecastFlows.BFGSResult; eps_g_norm=1e-6)
     return result.status == :OPTIMAL && result.g_norm < eps_g_norm
 end
 
@@ -57,4 +57,36 @@ end
     options_iter_limit = BFGSOptions(max_iters=2, verbose=false, eps_g_norm=g_norm_tol)
     res_limit = solve!(solver2, f2∇f2!, p2; options=options_iter_limit, x0=x0)
     @test res_limit.status == :ITERATION_LIMIT
+end
+
+@testset "lbfgs history" begin
+    state = ForecastFlows.LBFGSState(Float64, 2, 3)
+    state.sk .= [1.0, 0.0]
+    state.yk .= [2.0, 0.0]
+    ForecastFlows.update_Hk!(state)
+    @test state.ind[1] == 2
+
+    state.sk .= [0.0, 1.0]
+    state.yk .= [0.0, 2.0]
+    ForecastFlows.update_Hk!(state)
+    @test state.ind[1] == 3
+end
+
+@testset "result ownership and BLAS restore" begin
+    function f∇f!(g, x, _)
+        g .= x
+        return sum(abs2, x) / 2
+    end
+
+    solver = BFGSSolver(2)
+    options_threads = BFGSOptions(verbose=false, final_print=false, logging=false, num_threads=1)
+    original_threads = BLAS.get_num_threads()
+
+    res1 = solve!(solver, f∇f!, nothing; options=options_threads, x0=[1.0, 2.0])
+    snapshot = copy(res1.x)
+    solve!(solver, f∇f!, nothing; options=options_threads, x0=[3.0, 4.0])
+
+    @test res1.x == snapshot
+    @test res1.x !== solver.state.xk
+    @test BLAS.get_num_threads() == original_threads
 end

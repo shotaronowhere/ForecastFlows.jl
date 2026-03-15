@@ -1,0 +1,48 @@
+{
+  "protocol_version": 2,
+  "request_id": "compare-fixture",
+  "ok": true,
+  "command": "compare_prediction_market_families",
+  "result": {
+    "direct_only": {
+      "status": "certified",
+      "mode": "direct_only",
+      "certificate": {
+        "passed": true,
+        "message": "certified"
+      },
+      "trades": [
+        {
+          "market_id": "m1",
+          "outcome_id": "1"
+        }
+      ],
+      "split_merge": {
+        "mint": 0.0,
+        "merge": 0.0
+      }
+    },
+    "mixed_enabled": {
+      "status": "uncertified",
+      "mode": "mixed_enabled",
+      "certificate": {
+        "passed": false,
+        "message": "certified; split/merge bound remained near-active after 0 doublings (bound=5.0)"
+      },
+      "trades": [
+        {
+          "market_id": "m1",
+          "outcome_id": "1"
+        },
+        {
+          "market_id": "m2",
+          "outcome_id": "2"
+        }
+      ],
+      "split_merge": {
+        "mint": 5.0,
+        "merge": 0.0
+      }
+    }
+  }
+}

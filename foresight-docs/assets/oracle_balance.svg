@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 248" width="960" height="248" role="img" aria-labelledby="title desc">
+  <title id="title">Split or merge oracle</title>
+  <desc id="desc">A simplified oracle diagram. A central balance compares collateral price against the sum of outcome prices. Below it, three cases show that if the sum of outcome prices is greater than collateral the action is mint, if equal the action is hold, and if less the action is merge.</desc>
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .beam { fill: none; stroke: #2c2c2c; stroke-width: 2; stroke-linecap: round; }
+      .light { fill: none; stroke: #9aa1ab; stroke-width: 1.6; }
+      .block { fill: none; stroke: #2c2c2c; stroke-width: 2; }
+      .blueFill { fill: #d6e4f0; stroke: #587ea3; stroke-width: 1.8; }
+      .warmFill { fill: #f2ddd4; stroke: #b56a4f; stroke-width: 1.8; }
+      .title { font: 600 18px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .hint { font: 500 12px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #6a7280; }
+      .label { font: 600 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .nodeText { font: 600 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; text-anchor: middle; dominant-baseline: middle; }
+      .mint { font: 700 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #36536d; }
+      .hold { font: 700 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #6a7280; }
+      .merge { font: 700 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #b56a4f; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="960" height="248" />
+
+  <text class="title" x="480" y="32" text-anchor="middle">SPLIT / MERGE ORACLE</text>
+  <text class="hint" x="480" y="54" text-anchor="middle">compare sum(outcome prices) against collateral price</text>
+
+  <line class="beam" x1="350" y1="102" x2="610" y2="102" />
+  <polygon points="480,106 494,128 466,128" fill="#2c2c2c" />
+
+  <line class="light" x1="392" y1="102" x2="392" y2="128" />
+  <rect class="block" x="372" y="68" width="40" height="28" rx="4" />
+  <text class="nodeText" x="392" y="82">C</text>
+  <text class="hint" x="392" y="144" text-anchor="middle">collateral</text>
+
+  <line class="light" x1="568" y1="102" x2="568" y2="132" />
+  <rect class="block" x="550" y="58" width="36" height="14" rx="2" />
+  <rect class="block" x="550" y="76" width="36" height="14" rx="2" />
+  <rect class="block" x="550" y="94" width="36" height="14" rx="2" />
+  <text class="hint" x="568" y="144" text-anchor="middle">sum outcomes</text>
+
+  <text class="label" x="480" y="170" text-anchor="middle">gap = Σ outcomes - collateral</text>
+
+  <text class="hint" x="200" y="198" text-anchor="middle">gap &gt; 0</text>
+  <line class="beam" x1="170" y1="210" x2="230" y2="210" />
+  <rect class="blueFill" x="182" y="186" width="14" height="8" rx="1" />
+  <rect class="blueFill" x="182" y="196" width="14" height="8" rx="1" />
+  <rect class="blueFill" x="182" y="206" width="14" height="8" rx="1" />
+  <rect class="block" x="205" y="198" width="14" height="10" rx="1" />
+  <text class="mint" x="200" y="236" text-anchor="middle">MINT</text>
+
+  <text class="hint" x="480" y="198" text-anchor="middle">gap = 0</text>
+  <line class="beam" x1="450" y1="210" x2="510" y2="210" />
+  <rect class="block" x="462" y="198" width="14" height="10" rx="1" />
+  <rect class="block" x="485" y="198" width="14" height="10" rx="1" />
+  <text class="hold" x="480" y="236" text-anchor="middle">HOLD</text>
+
+  <text class="hint" x="760" y="198" text-anchor="middle">gap &lt; 0</text>
+  <line class="beam" x1="730" y1="210" x2="790" y2="210" />
+  <rect class="block" x="742" y="198" width="14" height="10" rx="1" />
+  <rect class="warmFill" x="765" y="186" width="14" height="8" rx="1" />
+  <rect class="warmFill" x="765" y="196" width="14" height="8" rx="1" />
+  <rect class="warmFill" x="765" y="206" width="14" height="8" rx="1" />
+  <text class="merge" x="760" y="236" text-anchor="middle">MERGE</text>
+</svg>

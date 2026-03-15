@@ -1,10 +1,11 @@
 #=
 # CFMM Routing
-This example uses `ConvexFlows` to solve a CFMM order routing problem
+This example uses `ForecastFlows` to solve a CFMM order routing problem
 
 =#
 
-using ConvexFlows
+using ForecastFlows
+import ForecastFlows: Edge, Linear, BFGSOptions, problem, solve!
 using Random, LinearAlgebra, SparseArrays
 using Plots
 import Graphs: Graph
@@ -35,6 +36,7 @@ Random.seed!(1)
 Rs = [10*rand(2) for _ in 1:length(edge_inds)]
 f(δ, R1, R2) = R2*δ/(R1 + δ)
 
+# This example uses the legacy two-node `problem` / `Edge((i, j); ...)` interface.
 cfmms = Edge[]
 for (i, inds) in enumerate(edge_inds)
     i1, i2 = inds

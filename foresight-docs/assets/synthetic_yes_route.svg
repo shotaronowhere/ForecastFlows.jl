@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 260" width="920" height="260" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic YES route</title>
+  <desc id="desc">A clean routing diagram. One unit of collateral is split into YES and NO, the YES leg is kept, the NO leg is sold back for collateral, and the synthetic cost of YES is shown as 1.00 minus 0.45 equals 0.55, compared with a direct cost of 0.62.</desc>
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .node { fill: none; stroke: #2c2c2c; stroke-width: 2; }
+      .box { fill: none; stroke: #2c2c2c; stroke-width: 2; }
+      .route { fill: none; stroke: #587ea3; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+      .hedge { fill: none; stroke: #b56a4f; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+      .direct { fill: none; stroke: #8f96a3; stroke-width: 1.8; stroke-dasharray: 5 5; stroke-linecap: round; }
+      .title { font: 600 18px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .hint { font: 500 12px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #6a7280; }
+      .label { font: 600 14px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; }
+      .nodeText { font: 600 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #2c2c2c; text-anchor: middle; dominant-baseline: middle; }
+      .good { font: 700 15px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #36536d; }
+      .bad { font: 600 13px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; fill: #8a4a3c; }
+    </style>
+    <marker id="blueArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#587ea3" />
+    </marker>
+    <marker id="warmArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b56a4f" />
+    </marker>
+    <marker id="grayArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8f96a3" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="920" height="260" />
+
+  <text class="title" x="460" y="34" text-anchor="middle">SYNTHETIC YES</text>
+  <text class="hint" x="460" y="58" text-anchor="middle">split a complete set, keep YES, sell NO</text>
+
+  <circle class="node" cx="112" cy="138" r="24" />
+  <text class="nodeText" x="112" y="138">C</text>
+  <text class="hint" x="112" y="178" text-anchor="middle">1.00 in</text>
+
+  <rect class="box" x="246" y="120" width="76" height="36" rx="4" />
+  <text class="label" x="284" y="143" text-anchor="middle">split()</text>
+
+  <circle class="node" cx="432" cy="98" r="20" />
+  <text class="nodeText" x="432" y="98">YES</text>
+  <circle class="node" cx="432" cy="178" r="20" />
+  <text class="nodeText" x="432" y="178">NO</text>
+
+  <circle class="node" cx="668" cy="98" r="24" />
+  <text class="nodeText" x="668" y="98">YES</text>
+  <circle class="node" cx="668" cy="178" r="24" />
+  <text class="nodeText" x="668" y="178">C</text>
+  <text class="hint" x="668" y="214" text-anchor="middle">0.45 back</text>
+
+  <path class="direct" d="M136 118 C260 70 468 58 644 88" marker-end="url(#grayArrow)" />
+  <text class="hint" x="356" y="74" text-anchor="middle">direct buy: 0.62 C</text>
+
+  <path class="route" d="M136 138 L246 138" marker-end="url(#blueArrow)" />
+  <path class="route" d="M322 138 L410 104" marker-end="url(#blueArrow)" />
+  <path class="route" d="M322 138 L410 172" marker-end="url(#blueArrow)" />
+  <path class="route" d="M452 98 L644 98" marker-end="url(#blueArrow)" />
+  <path class="hedge" d="M452 178 L644 178" marker-end="url(#warmArrow)" />
+
+  <text class="hint" x="550" y="84" text-anchor="middle">keep</text>
+  <text class="hint" x="550" y="164" text-anchor="middle">sell</text>
+
+  <line class="direct" x1="772" y1="78" x2="772" y2="200" />
+  <text class="good" x="798" y="110">1.00 - 0.45 = 0.55</text>
+  <text class="bad" x="798" y="140">synthetic &lt; direct</text>
+  <text class="hint" x="798" y="168">0.55 C &lt; 0.62 C</text>
+</svg>

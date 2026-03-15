@@ -1,0 +1,32 @@
+{
+  "protocol_version": 2,
+  "request_id": "solve-mixed-fixture",
+  "ok": true,
+  "command": "solve_prediction_market",
+  "result": {
+    "status": "uncertified",
+    "mode": "mixed_enabled",
+    "certificate": {
+      "passed": false,
+      "message": "certified; split/merge bound remained near-active after 0 doublings (bound=5.0)"
+    },
+    "outcome_ids": [
+      "1",
+      "2"
+    ],
+    "trades": [
+      {
+        "market_id": "m1",
+        "outcome_id": "1"
+      },
+      {
+        "market_id": "m2",
+        "outcome_id": "2"
+      }
+    ],
+    "split_merge": {
+      "mint": 5.0,
+      "merge": 0.0
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "protocol_version": 2,
+  "request_id": "invalid-fixture",
+  "ok": false,
+  "error": {
+    "code": "invalid_request",
+    "message": "ArgumentError: unsupported command: wat"
+  }
+}

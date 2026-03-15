@@ -1,0 +1,38 @@
+{
+  "two_pool_single_tick_direct_only": {
+    "direct_net_ev": 100.10232571535741,
+    "mixed_net_ev": 100.10220604443845,
+    "best_family": "direct",
+    "best_net_ev": 100.10232571535741
+  },
+  "ninety_eight_outcome_multitick_direct_only": {
+    "direct_net_ev": 98.10618891418828,
+    "mixed_net_ev": 98.09722423581128,
+    "best_family": "direct",
+    "best_net_ev": 98.10618891418828
+  },
+  "small_bundle_mixed_case": {
+    "direct_net_ev": 100.13251839270806,
+    "mixed_net_ev": 100.14776761282913,
+    "best_family": "mixed",
+    "best_net_ev": 100.14776761282913
+  },
+  "legacy_holdings_direct_only_case": {
+    "direct_net_ev": 38.86289096544523,
+    "mixed_net_ev": 38.86268748411977,
+    "best_family": "direct",
+    "best_net_ev": 38.86289096544523
+  },
+  "mixed_route_favorable_synthetic_case": {
+    "direct_net_ev": 100.02152867575579,
+    "mixed_net_ev": 100.10782940141247,
+    "best_family": "mixed",
+    "best_net_ev": 100.10782940141247
+  },
+  "heterogeneous_ninety_eight_outcome_l1_like_case": {
+    "direct_net_ev": 150.2510350571349,
+    "mixed_net_ev": 150.36411702995255,
+    "best_family": "mixed",
+    "best_net_ev": 150.36411702995255
+  }
+}
