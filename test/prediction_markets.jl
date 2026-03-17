@@ -2185,13 +2185,13 @@ end
 
             merge_problem = PredictionMarketProblem(
                 [
-                    OutcomeSpec("YES", 0.45, 0.0),
-                    OutcomeSpec("NO", 0.55, 0.0),
+                    OutcomeSpec("YES", 0.15, 3.0),
+                    OutcomeSpec("NO", 0.15, 3.0),
                 ],
-                1.0,
+                0.0,
                 [
-                    ConstantProductMarketSpec("m1", "YES", 70.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", "NO", 30.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m1", "YES", 20.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 20.0, 100.0, 1.0),
                 ];
                 split_bound=5.0,
             )

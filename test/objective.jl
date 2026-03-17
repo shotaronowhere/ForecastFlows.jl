@@ -101,11 +101,26 @@ end
     @test U(zero_endowment, y) ≈ U(linear, y) atol=obj_tol
     @test Ubar(zero_endowment, ν) ≈ Ubar(linear, ν) atol=obj_tol
 
+    # When ν ≈ c, no coordinates are pinned
     target = zeros(3)
     fixed = trues(3)
-    ForecastFlows.recovery_targets!(target, fixed, obj, ν)
+    ν_at_c = obj.c .+ 0.0  # exactly at c
+    ForecastFlows.recovery_targets!(target, fixed, obj, ν_at_c)
     @test target == zeros(3)
     @test fixed == falses(3)
+
+    # Correct recovery_targets! behavior: pinned coordinates
+    let
+        obj2 = EndowmentLinear([1.0, 0.3, 0.7], [100.0, 50.0, 25.0])
+        ν2 = [1.0, 0.8, 0.7]  # ν[2] > c[2], ν[1] ≈ c[1], ν[3] ≈ c[3]
+        target2 = zeros(3)
+        fixed2 = falses(3)
+        ForecastFlows.recovery_targets!(target2, fixed2, obj2, ν2)
+        @test fixed2[2] == true
+        @test target2[2] ≈ -50.0
+        @test fixed2[1] == false
+        @test fixed2[3] == false
+    end
 end
 
 @testset "basket liquidation" begin
