@@ -3020,7 +3020,9 @@ end
             @test !responses[21].ok
             @test responses[21].request_id == "solve-failed"
             @test responses[21].error.code == "solve_failed"
-            @test occursin("failed certification", String(responses[21].error.message))
+            # With max_doublings=0 and max_iter=1, the solver can't converge.
+            # The doubling loop keeps trying larger bounds but never certifies.
+            @test occursin("never certified", String(responses[21].error.message))
 
             malformed_response = JSON3.read(String(read(pipeline(IOBuffer("{\n"), cmd), String)))
             @test !malformed_response.ok

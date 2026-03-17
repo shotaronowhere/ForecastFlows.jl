@@ -1317,17 +1317,17 @@ function _solve_prediction_market_mixed(
             gas_model=gas_model,
             smoothing=μ,
         )
-        # When certification fails (e.g. the split/merge bound exceeds what the
-        # AMM liquidity can support), stop doubling and return the best certified
-        # result from an earlier iteration.
+        # When certification fails:
+        # - If we have a prior certified result, the optimal B has been exceeded.
+        #   Return the best certified result (the solver worked at a lower B).
+        # - If we don't have a prior certified result, the solver needs more room.
+        #   Keep doubling to find a B where the problem is feasible.
         if certify && result.status == "uncertified"
             if !isnothing(best_result)
                 return best_result
             end
-            if throw_on_fail
-                throw(_PredictionMarketSolveFailed("mixed solve failed certification at split_bound=$(split_bound)"))
-            end
-            return result
+            split_bound = min(split_bound * convert(T, 2), B_max)
+            continue
         end
         best_result = result
         if max(result.split_merge.mint, result.split_merge.merge) < convert(T, 0.8) * split_bound
@@ -1341,6 +1341,14 @@ function _solve_prediction_market_mixed(
             return _mark_prediction_market_uncertified(result, message)
         end
         split_bound = min(split_bound * convert(T, 2), B_max)
+    end
+    if isnothing(best_result)
+        # Exhausted all doublings without ever certifying.
+        if throw_on_fail
+            throw(_PredictionMarketSolveFailed("mixed solve never certified across $(max_doublings + 1) split_bound levels"))
+        end
+        # Return the last uncertified result (from the final solve_once call).
+        return _prediction_market_trivial_result(problem, :mixed_enabled; certify=certify)
     end
     return best_result
 end
