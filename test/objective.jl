@@ -121,6 +121,30 @@ end
         @test fixed2[1] == false
         @test fixed2[3] == false
     end
+
+    # Integration: recovery_targets! enables correct split/merge recovery
+    let
+        # 3 assets: collateral (1), outcome A (2), outcome B (3)
+        # User wants to buy outcome A, holding 100 collateral
+        c = [1.0, 2.0, 1.0]   # values outcome A at 2x collateral
+        h0 = [100.0, 0.0, 0.0]
+        obj = EndowmentLinear(c, h0)
+
+        # Simulate dual prices where ν_A > c_A (outcome A overpriced in dual)
+        ν_high = [1.0, 2.5, 1.0]
+        target_h = zeros(3)
+        fixed_h = falses(3)
+        ForecastFlows.recovery_targets!(target_h, fixed_h, obj, ν_high)
+        @test fixed_h == [false, true, false]
+        @test target_h[2] ≈ 0.0  # h0[2]=0, so target = -0 = 0
+
+        # Simulate dual prices where all ν ≈ c (on face)
+        ν_face = [1.0 + 1e-12, 2.0 - 1e-12, 1.0 + 1e-12]
+        target_f = zeros(3)
+        fixed_f = falses(3)
+        ForecastFlows.recovery_targets!(target_f, fixed_f, obj, ν_face)
+        @test fixed_f == [false, false, false]
+    end
 end
 
 @testset "basket liquidation" begin
