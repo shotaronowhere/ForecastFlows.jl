@@ -1263,19 +1263,34 @@ function _solve_prediction_market_mixed(
 
     split_bound = isnothing(problem.split_bound) ? _default_split_bound(problem) : problem.split_bound
     best_result = nothing
-    ν_seed = nothing
+    # Warm-start the first mixed iteration from the direct-only dual solution
+    # when available. The direct ν provides reasonable AMM prices that help BFGS
+    # converge to a better mixed solution instead of a degenerate flat region.
+    ν_seed = !isnothing(workspace) ? _workspace_seed(workspace, :direct_only) : nothing
     for doubling in 0:max_doublings
         result, ν_seed = _solve_prediction_market_once(
             problem;
             mode=:mixed_enabled,
             split_bound=split_bound,
             certify=certify,
-            throw_on_fail=throw_on_fail,
+            throw_on_fail=false,
             solver_options=solver_options,
             workspace=workspace,
             ν0=ν_seed,
             gas_model=gas_model,
         )
+        # When certification fails (e.g. the split/merge bound exceeds what the
+        # AMM liquidity can support), stop doubling and return the best certified
+        # result from an earlier iteration.
+        if certify && result.status == "uncertified"
+            if !isnothing(best_result)
+                return best_result
+            end
+            if throw_on_fail
+                throw(_PredictionMarketSolveFailed("mixed solve failed certification at split_bound=$(split_bound)"))
+            end
+            return result
+        end
         best_result = result
         if max(result.split_merge.mint, result.split_merge.merge) < convert(T, 0.8) * split_bound
             return result

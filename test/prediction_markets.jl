@@ -1964,27 +1964,22 @@ end
                     ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
                 ],
             )
-            let err = try
-                    solve_prediction_market(default_mixed_problem; mode=:mixed_enabled, solver_options=facade_solver_options)
-                    nothing
-                catch err
-                    err
-                end
-                @test err isa ForecastFlows._PredictionMarketSolveFailed
-                @test occursin("failed certification", sprint(showerror, err))
-            end
+            # The doubling loop now returns the best certified result from an earlier
+            # iteration when later doublings fail certification, so this should succeed.
+            default_result = solve_prediction_market(default_mixed_problem; mode=:mixed_enabled, solver_options=facade_solver_options)
+            @test default_result.status == "certified"
 
-            unsafe_result = solve_prediction_market(
+            safe_result = solve_prediction_market(
                 default_mixed_problem;
                 mode=:mixed_enabled,
                 throw_on_fail=false,
                 solver_options=facade_solver_options,
             )
-            @test unsafe_result.status == "uncertified"
-            encoded = JSON3.write(unsafe_result)
+            @test safe_result.status == "certified"
+            encoded = JSON3.write(safe_result)
             parsed = JSON3.read(encoded)
-            @test isnothing(parsed.certificate.primal_value)
-            @test isnothing(parsed.certificate.duality_gap)
+            @test !isnothing(parsed.certificate.primal_value)
+            @test !isnothing(parsed.certificate.duality_gap)
 
             zero_balance_problem = PredictionMarketProblem(
                 [
@@ -2919,9 +2914,11 @@ end
 
             @test responses[7].ok
             @test responses[7].request_id == "uncertified-json"
-            @test responses[7].result.status == "uncertified"
-            @test isnothing(responses[7].result.certificate.primal_value)
-            @test isnothing(responses[7].result.certificate.duality_gap)
+            # The doubling loop returns the best certified result from an earlier
+            # iteration when later doublings fail, so this is now certified.
+            @test responses[7].result.status == "certified"
+            @test !isnothing(responses[7].result.certificate.primal_value)
+            @test !isnothing(responses[7].result.certificate.duality_gap)
 
             @test responses[8].ok
             @test responses[8].request_id == "gas-solve"

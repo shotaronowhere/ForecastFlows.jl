@@ -952,10 +952,11 @@ function solve_with_fixed_gas!(
 ) where T
     length(gas_model.action_costs) == s.m || throw(ArgumentError("gas model must have one cost per edge"))
 
-    solve_kw_nt = (; solve_kwargs...,)
+    solve_kw_all = (; solve_kwargs...,)
+    ν_seed = haskey(solve_kw_all, :ν0) ? solve_kw_all[:ν0] : nothing
+    solve_kw_nt = Base.structdiff(solve_kw_all, NamedTuple{(:ν0,)})
     active = trues(s.m)
     edge_values = zeros(T, s.m)
-    ν_seed = nothing
     total_time = 0.0
     rounds = 0
 

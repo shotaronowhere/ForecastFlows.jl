@@ -243,10 +243,14 @@ function recover_splitmerge_flow!(
     tol::T=sqrt(eps(T)),
 ) where T
     gap = splitmerge_gap(η)
-    if gap > tol
+    # The gap is a sum of length(η) terms, each with O(tol) noise from BFGS
+    # convergence. Scale the gap tolerance by the number of terms to avoid
+    # false snapping when the gap is at noise level.
+    gap_tol = tol * convert(T, length(η))
+    if gap > gap_tol
         splitmerge_flow!(x, e, e.B)
         return e.B
-    elseif gap < -tol
+    elseif gap < -gap_tol
         splitmerge_flow!(x, e, -e.B)
         return -e.B
     end
