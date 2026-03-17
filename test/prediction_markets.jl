@@ -1298,6 +1298,33 @@ end
         @test all(endowment.y .>= -endowment.flow_objective.h0 .- 1e-8)
     end
 
+    @testset "smoothed split/merge oracle" begin
+        e_smooth = ForecastFlows.SplitMergeEdge([1, 2, 3], 100.0; μ=0.01)
+        x = zeros(3)
+
+        # Large gap → saturates at B (linear regime)
+        ForecastFlows.find_arb!(x, e_smooth, [0.5, 0.8, 0.9])
+        @test x[1] ≈ -100.0
+        @test x[2] ≈ 100.0
+
+        # Small gap → smoothed intermediate flow (quadratic regime)
+        # gap = 0.502 + 0.502 - 1.0 = 0.004, w = 0.004/0.01 = 0.4
+        ForecastFlows.find_arb!(x, e_smooth, [1.0, 0.502, 0.502])
+        @test x[1] ≈ -0.4 atol=1e-10
+
+        # Zero gap → zero flow
+        ForecastFlows.find_arb!(x, e_smooth, [1.0, 0.5, 0.5])
+        @test all(x .≈ 0.0)
+
+        # Nonsmooth flag
+        @test !ForecastFlows.is_nonsmooth(e_smooth)
+        @test ForecastFlows.is_nonsmooth(ForecastFlows.SplitMergeEdge([1, 2, 3], 100.0))
+
+        # μ=0 default preserves original behavior
+        e_exact = ForecastFlows.SplitMergeEdge([1, 2, 3], 100.0)
+        @test e_exact.μ == 0.0
+    end
+
     @testset "smooth solver parity" begin
         obj = Swap(2, 1, 1.0, 3)
         edges = Edge[

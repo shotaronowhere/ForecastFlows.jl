@@ -193,23 +193,30 @@ function find_arb!(x::Vector{T}, cfmm::UniV3{T}, η::AbstractVector{T}) where T
 end
 
 """
-    SplitMergeEdge(Ai, B)
+    SplitMergeEdge(Ai, B; μ=0)
 
 Fee-free mint/merge hyperedge with local node ordering `[collateral, outcomes...]`.
 `Ai[1]` must be the collateral node, and `Ai[2:end]` must be the outcome nodes.
+
+When `μ > 0`, the support function is Moreau-Yosida smoothed (thesis §5):
+`f_sm^μ(η) = max_{w∈[-B,B]} {w·gap - μ/2·w²}`, giving oracle `w = clamp(gap/μ, -B, B)`.
+This makes the dual C¹ and steers the solver to L-BFGS-B.
 """
 struct SplitMergeEdge{T} <: Edge{T}
     Ai::Vector{Int}
     B::T
+    μ::T
 
-    function SplitMergeEdge(Ai, B)
+    function SplitMergeEdge(Ai, B; μ=0)
         length(Ai) >= 3 || throw(ArgumentError("SplitMergeEdge requires local ordering [collateral, outcomes...] with at least two outcomes"))
-        T = B isa Integer ? Float64 : typeof(B)
-        return new{T}(collect(Int, Ai), convert(T, B))
+        T = promote_type(B isa Integer ? Float64 : typeof(float(B)), typeof(float(μ)))
+        mu = convert(T, μ)
+        mu >= zero(T) || throw(ArgumentError("smoothing parameter μ must be nonnegative"))
+        return new{T}(collect(Int, Ai), convert(T, B), mu)
     end
 end
 
-is_nonsmooth(::SplitMergeEdge) = true
+is_nonsmooth(e::SplitMergeEdge) = iszero(e.μ)
 
 splitmerge_gap(η::AbstractVector{T}) where T = sum(@view η[2:end]) - η[1]
 
@@ -221,13 +228,20 @@ end
 
 function find_arb!(x::Vector{T}, e::SplitMergeEdge{T}, η::AbstractVector{T}) where T
     gap = splitmerge_gap(η)
-    tol = sqrt(eps(T))
-    if gap > tol
-        splitmerge_flow!(x, e, e.B)
-    elseif gap < -tol
-        splitmerge_flow!(x, e, -e.B)
+    if iszero(e.μ)
+        # Exact (nonsmooth) bang-bang oracle: support function of T_sm
+        tol = sqrt(eps(T))
+        if gap > tol
+            splitmerge_flow!(x, e, e.B)
+        elseif gap < -tol
+            splitmerge_flow!(x, e, -e.B)
+        else
+            fill!(x, zero(T))
+        end
     else
-        fill!(x, zero(T))
+        # Moreau-Yosida smoothed oracle: w* = clamp(gap/μ, -B, B)
+        w = clamp(gap / e.μ, -e.B, e.B)
+        abs(w) < sqrt(eps(T)) ? fill!(x, zero(T)) : splitmerge_flow!(x, e, w)
     end
     return nothing
 end
