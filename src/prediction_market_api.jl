@@ -848,6 +848,30 @@ function _default_split_bound(problem::PredictionMarketProblem{T}) where T
     return max(problem.collateral_balance + holdings, eps(T))
 end
 
+function _analytical_split_bound(problem::PredictionMarketProblem{T}) where T
+    # Physical upper bound: no flow can exceed the total obtainable tokens
+    # for any outcome (holding + AMM reserve).
+    outcome_caps = Dict{String,T}()
+    for outcome in problem.outcomes
+        outcome_caps[outcome.outcome_id] = outcome.initial_holding
+    end
+    for market in problem.markets
+        if market isa ConstantProductMarketSpec
+            cap = get(outcome_caps, market.outcome_id, zero(T))
+            outcome_caps[market.outcome_id] = cap + market.outcome_reserve
+        end
+        # UniV3 capacity depends on tick ranges; omitting is conservative.
+    end
+    isempty(outcome_caps) && return max(problem.collateral_balance, eps(T))
+    return minimum(values(outcome_caps))
+end
+
+function _smoothing_parameter(::Type{T}, B::T, gap_tol::T) where T
+    # μ = gap_tol / (5 · B²) ensures Moreau-Yosida bias μB²/2 ≤ gap_tol/10
+    B_safe = max(B, one(T))
+    return gap_tol / (convert(T, 5) * B_safe * B_safe)
+end
+
 function _prediction_market_objective(problem::PredictionMarketProblem{T}) where T
     n = length(problem.outcomes)
     c = Vector{T}(undef, n + 1)
@@ -879,7 +903,8 @@ function _prediction_market_edges(
     problem::PredictionMarketProblem{T},
     layout::_PredictionMarketLayout,
     mode::Symbol,
-    split_bound::Union{Nothing,T}=nothing,
+    split_bound::Union{Nothing,T}=nothing;
+    smoothing::T=zero(T),
 ) where T
     edges = Edge[]
     for spec in problem.markets
@@ -887,7 +912,7 @@ function _prediction_market_edges(
     end
     if mode == :mixed_enabled
         bound = isnothing(split_bound) ? _default_split_bound(problem) : split_bound
-        push!(edges, SplitMergeEdge(collect(1:(length(problem.outcomes) + 1)), bound))
+        push!(edges, SplitMergeEdge(collect(1:(length(problem.outcomes) + 1)), bound; μ=smoothing))
     end
     return edges
 end
@@ -896,11 +921,12 @@ function _prediction_market_solver(
     problem::PredictionMarketProblem{T},
     layout::_PredictionMarketLayout,
     mode::Symbol,
-    split_bound::Union{Nothing,T}=nothing,
+    split_bound::Union{Nothing,T}=nothing;
+    smoothing::T=zero(T),
 ) where T
     return Solver(
         flow_objective=_prediction_market_objective(problem),
-        edges=_prediction_market_edges(problem, layout, mode, split_bound),
+        edges=_prediction_market_edges(problem, layout, mode, split_bound; smoothing=smoothing),
         n=length(problem.outcomes) + 1,
     )
 end
@@ -939,7 +965,8 @@ function _update_prediction_market_solver!(
     problem::PredictionMarketProblem{T},
     layout::_PredictionMarketLayout,
     mode::Symbol,
-    split_bound::Union{Nothing,T}=nothing,
+    split_bound::Union{Nothing,T}=nothing;
+    smoothing::T=zero(T),
 ) where T
     _update_prediction_market_objective!(solver, problem)
     for (i, spec) in enumerate(problem.markets)
@@ -947,7 +974,7 @@ function _update_prediction_market_solver!(
     end
     if mode == :mixed_enabled
         bound = isnothing(split_bound) ? _default_split_bound(problem) : split_bound
-        solver.edges[end] = SplitMergeEdge(collect(1:(length(problem.outcomes) + 1)), bound)
+        solver.edges[end] = SplitMergeEdge(collect(1:(length(problem.outcomes) + 1)), bound; μ=smoothing)
     end
     return _reset_prediction_market_solver!(solver)
 end
@@ -960,23 +987,24 @@ function _workspace_solver!(
     workspace::PredictionMarketWorkspace{T},
     problem::PredictionMarketProblem{T},
     mode::Symbol,
-    split_bound::Union{Nothing,T}=nothing,
+    split_bound::Union{Nothing,T}=nothing;
+    smoothing::T=zero(T),
 ) where T
     _prediction_market_compatible_layout(workspace.layout, problem) ||
         throw(ArgumentError("problem topology does not match workspace template"))
     if mode == :direct_only
         if isnothing(workspace.direct_solver)
-            workspace.direct_solver = _prediction_market_solver(problem, workspace.layout, mode, split_bound)
+            workspace.direct_solver = _prediction_market_solver(problem, workspace.layout, mode, split_bound; smoothing=smoothing)
         else
-            _update_prediction_market_solver!(workspace.direct_solver::Solver{T}, problem, workspace.layout, mode, split_bound)
+            _update_prediction_market_solver!(workspace.direct_solver::Solver{T}, problem, workspace.layout, mode, split_bound; smoothing=smoothing)
         end
         return workspace.direct_solver::Solver{T}
     end
 
     if isnothing(workspace.mixed_solver)
-        workspace.mixed_solver = _prediction_market_solver(problem, workspace.layout, mode, split_bound)
+        workspace.mixed_solver = _prediction_market_solver(problem, workspace.layout, mode, split_bound; smoothing=smoothing)
     else
-        _update_prediction_market_solver!(workspace.mixed_solver::Solver{T}, problem, workspace.layout, mode, split_bound)
+        _update_prediction_market_solver!(workspace.mixed_solver::Solver{T}, problem, workspace.layout, mode, split_bound; smoothing=smoothing)
     end
     return workspace.mixed_solver::Solver{T}
 end
@@ -1210,6 +1238,7 @@ function _solve_prediction_market_once(
     workspace::Union{Nothing,PredictionMarketWorkspace{T}}=nothing,
     ν0::Union{Nothing,AbstractVector{T}}=nothing,
     gas_model::Union{Nothing,PredictionMarketFixedGasModel{T}}=nothing,
+    smoothing::T=zero(T),
 ) where T
     if mode == :direct_only && isempty(problem.markets)
         !isnothing(gas_model) && _prediction_market_validate_gas_model(problem, gas_model)
@@ -1222,8 +1251,8 @@ function _solve_prediction_market_once(
 
     layout = isnothing(workspace) ? _prediction_market_layout(problem) : workspace.layout::_PredictionMarketLayout
     solver = isnothing(workspace) ?
-        _prediction_market_solver(problem, layout, mode, split_bound) :
-        _workspace_solver!(workspace, problem, mode, split_bound)
+        _prediction_market_solver(problem, layout, mode, split_bound; smoothing=smoothing) :
+        _workspace_solver!(workspace, problem, mode, split_bound; smoothing=smoothing)
     seed = isnothing(ν0) && !isnothing(workspace) ? _workspace_seed(workspace, mode) : ν0
     internal_gas_model = isnothing(gas_model) ? nothing : _prediction_market_internal_gas_model(problem, gas_model, mode)
 
@@ -1262,12 +1291,20 @@ function _solve_prediction_market_mixed(
     max_doublings >= 0 || throw(ArgumentError("max_doublings must be nonnegative"))
 
     split_bound = isnothing(problem.split_bound) ? _default_split_bound(problem) : problem.split_bound
+    B_max = _analytical_split_bound(problem)
     best_result = nothing
     # Warm-start the first mixed iteration from the direct-only dual solution
     # when available. The direct ν provides reasonable AMM prices that help BFGS
     # converge to a better mixed solution instead of a degenerate flat region.
     ν_seed = !isnothing(workspace) ? _workspace_seed(workspace, :direct_only) : nothing
+
+    # Compute gap_tol to match _solve_certificate_tolerances for μ selection
+    pgtol = haskey((; solver_options...,), :pgtol) ? (; solver_options...,).pgtol : 1e-5
+    gap_tol = max(convert(T, 500) * sqrt(eps(T)), convert(T, 500) * convert(T, pgtol))
+
     for doubling in 0:max_doublings
+        # Moreau-Yosida smoothing: μ = gap_tol / (5·B²) ensures bias ≤ gap_tol/10
+        μ = _smoothing_parameter(T, split_bound, gap_tol)
         result, ν_seed = _solve_prediction_market_once(
             problem;
             mode=:mixed_enabled,
@@ -1278,6 +1315,7 @@ function _solve_prediction_market_mixed(
             workspace=workspace,
             ν0=ν_seed,
             gas_model=gas_model,
+            smoothing=μ,
         )
         # When certification fails (e.g. the split/merge bound exceeds what the
         # AMM liquidity can support), stop doubling and return the best certified
@@ -1302,7 +1340,7 @@ function _solve_prediction_market_mixed(
             end
             return _mark_prediction_market_uncertified(result, message)
         end
-        split_bound *= convert(T, 2)
+        split_bound = min(split_bound * convert(T, 2), B_max)
     end
     return best_result
 end
