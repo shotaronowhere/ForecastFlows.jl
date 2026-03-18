@@ -848,6 +848,25 @@ function _default_split_bound(problem::PredictionMarketProblem{T}) where T
     return max(problem.collateral_balance + holdings, eps(T))
 end
 
+function _univ3_max_outcome_reserve(spec::UniV3MarketSpec{T}) where T
+    edge = UniV3(
+        _prediction_market_univ3_internal_current_price(spec.current_price),
+        _prediction_market_univ3_internal_lower_ticks(getfield(spec, :lower_ticks)),
+        _prediction_market_univ3_internal_liquidity_k(getfield(spec, :liquidity_k)),
+        spec.fee_multiplier,
+        [1, 2],
+    )
+    total = zero(T)
+    for i in 1:length(edge.lower_ticks)
+        k = edge.liquidity[i]
+        iszero(k) && continue
+        p_high = tick_high_price(edge, i)
+        p_low = tick_low_price(edge, i)
+        total += sqrt(k * p_high) - sqrt(k * p_low)
+    end
+    return total
+end
+
 function _analytical_split_bound(problem::PredictionMarketProblem{T}) where T
     # Physical upper bound: no flow can exceed the total obtainable tokens
     # for any outcome (holding + AMM reserve).
@@ -856,11 +875,12 @@ function _analytical_split_bound(problem::PredictionMarketProblem{T}) where T
         outcome_caps[outcome.outcome_id] = outcome.initial_holding
     end
     for market in problem.markets
+        cap = get(outcome_caps, market.outcome_id, zero(T))
         if market isa ConstantProductMarketSpec
-            cap = get(outcome_caps, market.outcome_id, zero(T))
             outcome_caps[market.outcome_id] = cap + market.outcome_reserve
+        elseif market isa UniV3MarketSpec
+            outcome_caps[market.outcome_id] = cap + _univ3_max_outcome_reserve(market)
         end
-        # UniV3 capacity depends on tick ranges; omitting is conservative.
     end
     isempty(outcome_caps) && return max(problem.collateral_balance, eps(T))
     return minimum(values(outcome_caps))
@@ -1303,7 +1323,11 @@ function _solve_prediction_market_mixed(
     gap_tol = max(convert(T, 500) * sqrt(eps(T)), convert(T, 500) * convert(T, pgtol))
 
     for doubling in 0:max_doublings
-        # Moreau-Yosida smoothing: μ = gap_tol / (5·B²) ensures bias ≤ gap_tol/10
+        # Moreau-Yosida smoothing: μ = gap_tol / (5·B²) ensures bias ≤ gap_tol/10.
+        # This makes the split/merge support function C¹, steering the solver to
+        # L-BFGS-B which handles the smoothed oracle correctly. The nonsmooth
+        # BFGS-exact path fails primal recovery for the split/merge edge because
+        # the bang-bang oracle always saturates at ±B.
         μ = _smoothing_parameter(T, split_bound, gap_tol)
         result, ν_seed = _solve_prediction_market_once(
             problem;
@@ -1324,7 +1348,35 @@ function _solve_prediction_market_mixed(
         #   Keep doubling to find a B where the problem is feasible.
         if certify && result.status == "uncertified"
             if !isnothing(best_result)
-                return best_result
+                # The last certified solve was at split_bound/2. Bisect between
+                # that and the current (failed) split_bound to find the highest
+                # certifiable bound, extracting more value from the merge edge.
+                lo = split_bound / convert(T, 2)
+                hi = split_bound
+                best_bisect = best_result
+                for _ in 1:4
+                    mid = (lo + hi) / convert(T, 2)
+                    μ_mid = _smoothing_parameter(T, mid, gap_tol)
+                    mid_result, ν_seed = _solve_prediction_market_once(
+                        problem;
+                        mode=:mixed_enabled,
+                        split_bound=mid,
+                        certify=true,
+                        throw_on_fail=false,
+                        solver_options=solver_options,
+                        workspace=workspace,
+                        ν0=ν_seed,
+                        gas_model=gas_model,
+                        smoothing=μ_mid,
+                    )
+                    if mid_result.status == "uncertified"
+                        hi = mid
+                    else
+                        lo = mid
+                        best_bisect = mid_result
+                    end
+                end
+                return best_bisect
             end
             split_bound = min(split_bound * convert(T, 2), B_max)
             continue
