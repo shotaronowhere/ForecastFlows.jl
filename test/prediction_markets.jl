@@ -1296,6 +1296,22 @@ end
         @test recover_primal!(endowment)
         @test endowment.xs[2] ≈ [-1.1, 1.1, 1.1] atol=1e-8
         @test all(endowment.y .>= -endowment.flow_objective.h0 .- 1e-8)
+
+        contradictory = zeros(3)
+        current_flow = [-0.9, 0.0, 0.0]
+        lower_bounds = [-1.0, 0.5, 0.5]
+        w = ForecastFlows.recover_splitmerge_flow!(
+            contradictory,
+            SplitMergeEdge([1, 2, 3], 2.0),
+            [1.0, 0.5, 0.5],
+            [-1.0, 1.0, 1.0],
+            trues(3);
+            current_flow=current_flow,
+            lower_bounds=lower_bounds,
+        )
+        @test w ≈ 0.1 atol=1e-8
+        @test contradictory ≈ [-0.1, 0.1, 0.1] atol=1e-8
+        @test current_flow[1] + contradictory[1] ≥ lower_bounds[1] - 1e-12
     end
 
     @testset "smoothed split/merge oracle" begin
@@ -2449,6 +2465,103 @@ end
                 @test benchmark_best_family(direct_public.net_ev, mixed_public.net_ev) == expected_family
                 @test expected.best_family == expected_family
             end
+        end
+
+        @testset "public pathological mixed continuation regression" begin
+            weights = [180, 165, 150, 120, 118, 116, 114, 112, 110, 108, 106, 104, 102, 100, 98, 96, 94, 60]
+            predictions = [w / sum(weights) for w in weights]
+            current_prices = let
+                factors = zeros(Float64, length(weights))
+                for idx in 0:(length(weights) - 1)
+                    if idx < 3
+                        factors[idx + 1] = (3150 + idx * 140) / 10_000.0
+                    elseif idx < 17
+                        factors[idx + 1] = (6900 + ((idx - 3) % 6) * 105) / 10_000.0
+                    else
+                        factors[idx + 1] = 14500 / 10_000.0
+                    end
+                end
+                [predictions[i] * factors[i] for i in 1:length(weights)]
+            end
+
+            function outcome_price_from_tick_local(tick::Integer, is_token1::Bool)
+                return setprecision(BigFloat, 256) do
+                    sqrt_price_x96 = (big"1.0001" ^ (BigFloat(tick) / big(2))) * (BigFloat(2) ^ 96)
+                    price = (sqrt_price_x96 / (BigFloat(2) ^ 96))^2
+                    Float64(is_token1 ? inv(price) : price)
+                end
+            end
+
+            buy_limit = outcome_price_from_tick_local(1, true)
+            sell_limit = outcome_price_from_tick_local(92_108, true)
+            liquidities = zeros(Float64, length(weights))
+            for idx in 0:(length(weights) - 1)
+                if idx < 3
+                    liquidities[idx + 1] = 8000.0 + idx * 850.0
+                elseif idx < 17
+                    liquidities[idx + 1] = 90.0 + idx * 7.0
+                else
+                    liquidities[idx + 1] = 2200.0 + idx * 120.0
+                end
+            end
+
+            pathological_problem = PredictionMarketProblem(
+                [OutcomeSpec(string(i), predictions[i], 0.0) for i in 1:length(weights)],
+                6.5,
+                [
+                    UniV3MarketSpec(
+                        "m$(i)",
+                        string(i),
+                        current_prices[i],
+                        [
+                            UniV3LiquidityBand(buy_limit, liquidities[i]),
+                            UniV3LiquidityBand(sell_limit, 0.0),
+                        ],
+                        0.9999,
+                    )
+                    for i in 1:length(weights)
+                ],
+            )
+
+            pathological_workspace = ForecastFlows.PredictionMarketWorkspace(pathological_problem)
+            direct_result = ForecastFlows.solve_prediction_market!(
+                pathological_workspace,
+                pathological_problem;
+                mode=:direct_only,
+                certify=true,
+                throw_on_fail=false,
+                solver_options=(; pgtol=1e-6, max_iter=10_000, max_fun=20_000),
+            )
+            mixed_result = ForecastFlows.solve_prediction_market!(
+                pathological_workspace,
+                pathological_problem;
+                mode=:mixed_enabled,
+                certify=true,
+                throw_on_fail=false,
+                max_doublings=6,
+                solver_options=(; pgtol=1e-6, max_iter=10_000, max_fun=20_000),
+            )
+
+            @test direct_result.status == "certified"
+            @test mixed_result.status == "certified"
+            @test mixed_result.final_ev > 100.0
+            @test mixed_result.final_ev > direct_result.final_ev + 80.0
+            @test mixed_result.split_merge.merge > 150.0
+
+            mixed_solver = getfield(pathological_workspace, :mixed_solver)
+            @test !isnothing(mixed_solver)
+            @test !isnothing(mixed_solver.certificate)
+            @test mixed_solver.certificate.passed
+
+            solver_final_holdings = [outcome.initial_holding for outcome in pathological_problem.outcomes] .+ mixed_solver.y[2:end]
+            solver_final_ev = pathological_problem.collateral_balance +
+                mixed_solver.y[1] +
+                dot([outcome.fair_value for outcome in pathological_problem.outcomes], solver_final_holdings)
+            @test solver_final_ev ≈ mixed_result.final_ev atol=1e-6
+
+            split_flow = mixed_solver.xs[end]
+            solver_merge = max(-(sum(@view split_flow[2:end]) / (length(split_flow) - 1)), 0.0)
+            @test solver_merge ≈ mixed_result.split_merge.merge atol=1e-6
         end
 
         @testset "workspace hot loop" begin

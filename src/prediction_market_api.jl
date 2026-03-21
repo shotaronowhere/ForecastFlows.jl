@@ -1313,9 +1313,12 @@ function _solve_prediction_market_mixed(
     split_bound = isnothing(problem.split_bound) ? _default_split_bound(problem) : problem.split_bound
     B_max = _analytical_split_bound(problem)
     best_result = nothing
-    # Warm-start the first mixed iteration from the direct-only dual solution
-    # when available. The direct ν provides reasonable AMM prices that help BFGS
-    # converge to a better mixed solution instead of a degenerate flat region.
+    best_solver_state = nothing
+    # Warm-start the mixed continuation from the direct-only dual solution when
+    # available. We only promote the seed after certified mixed solves: an
+    # uncertified dual iterate is not a trustworthy continuation point for the
+    # next split bound, and carrying it forward can push the solver onto a worse
+    # branch of the smoothed problem.
     ν_seed = !isnothing(workspace) ? _workspace_seed(workspace, :direct_only) : nothing
 
     # Compute gap_tol to match _solve_certificate_tolerances for μ selection
@@ -1329,7 +1332,7 @@ function _solve_prediction_market_mixed(
         # BFGS-exact path fails primal recovery for the split/merge edge because
         # the bang-bang oracle always saturates at ±B.
         μ = _smoothing_parameter(T, split_bound, gap_tol)
-        result, ν_seed = _solve_prediction_market_once(
+        result, ν_candidate = _solve_prediction_market_once(
             problem;
             mode=:mixed_enabled,
             split_bound=split_bound,
@@ -1354,10 +1357,13 @@ function _solve_prediction_market_mixed(
                 lo = split_bound / convert(T, 2)
                 hi = split_bound
                 best_bisect = best_result
+                ν_bisect = ν_seed
+                best_bisect_seed = ν_seed
+                best_bisect_solver = best_solver_state
                 for _ in 1:4
                     mid = (lo + hi) / convert(T, 2)
                     μ_mid = _smoothing_parameter(T, mid, gap_tol)
-                    mid_result, ν_seed = _solve_prediction_market_once(
+                    mid_result, ν_mid = _solve_prediction_market_once(
                         problem;
                         mode=:mixed_enabled,
                         split_bound=mid,
@@ -1365,7 +1371,7 @@ function _solve_prediction_market_mixed(
                         throw_on_fail=false,
                         solver_options=solver_options,
                         workspace=workspace,
-                        ν0=ν_seed,
+                        ν0=ν_bisect,
                         gas_model=gas_model,
                         smoothing=μ_mid,
                     )
@@ -1374,7 +1380,14 @@ function _solve_prediction_market_mixed(
                     else
                         lo = mid
                         best_bisect = mid_result
+                        ν_bisect = ν_mid
+                        best_bisect_seed = ν_mid
+                        !isnothing(workspace) && (best_bisect_solver = deepcopy(workspace.mixed_solver))
                     end
+                end
+                if !isnothing(workspace)
+                    !isnothing(best_bisect_seed) && _store_workspace_seed!(workspace, :mixed_enabled, best_bisect_seed)
+                    !isnothing(best_bisect_solver) && (workspace.mixed_solver = best_bisect_solver)
                 end
                 return best_bisect
             end
@@ -1382,6 +1395,8 @@ function _solve_prediction_market_mixed(
             continue
         end
         best_result = result
+        ν_seed = ν_candidate
+        !isnothing(workspace) && (best_solver_state = deepcopy(workspace.mixed_solver))
         if max(result.split_merge.mint, result.split_merge.merge) < convert(T, 0.8) * split_bound
             return result
         end

@@ -299,7 +299,10 @@ function recover_splitmerge_flow!(
     end
 
     if wlo > whi
-        w = clamp(num / den, -e.B, e.B)
+        # Contradictory bounds: no w satisfies both budget and outcome constraints.
+        # Prioritize the budget (collateral) constraint since it is a hard physical
+        # limit, then satisfy as many outcome constraints as possible.
+        w = clamp(num / den, -e.B, whi)
     else
         w = clamp(num / den, wlo, whi)
     end
