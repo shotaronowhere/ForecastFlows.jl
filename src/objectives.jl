@@ -212,8 +212,16 @@ end
 primal_lower_bounds(obj::EndowmentLinear{T}) where T = .-obj.h0
 
 function recovery_targets!(target, fixed, obj::EndowmentLinear{T}, ν) where T
-    fill!(target, zero(T))
-    fill!(fixed, false)
+    tol = convert(T, 1000) * sqrt(eps(T)) * max(one(T), maximum(abs, obj.c), maximum(abs, ν))
+    for i in eachindex(obj.c, ν)
+        if ν[i] > obj.c[i] + tol
+            target[i] = -obj.h0[i]
+            fixed[i] = true
+        else
+            target[i] = zero(T)
+            fixed[i] = false
+        end
+    end
     return nothing
 end
 

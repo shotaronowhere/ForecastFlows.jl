@@ -1296,6 +1296,49 @@ end
         @test recover_primal!(endowment)
         @test endowment.xs[2] ≈ [-1.1, 1.1, 1.1] atol=1e-8
         @test all(endowment.y .>= -endowment.flow_objective.h0 .- 1e-8)
+
+        contradictory = zeros(3)
+        current_flow = [-0.9, 0.0, 0.0]
+        lower_bounds = [-1.0, 0.5, 0.5]
+        w = ForecastFlows.recover_splitmerge_flow!(
+            contradictory,
+            SplitMergeEdge([1, 2, 3], 2.0),
+            [1.0, 0.5, 0.5],
+            [-1.0, 1.0, 1.0],
+            trues(3);
+            current_flow=current_flow,
+            lower_bounds=lower_bounds,
+        )
+        @test w ≈ 0.1 atol=1e-8
+        @test contradictory ≈ [-0.1, 0.1, 0.1] atol=1e-8
+        @test current_flow[1] + contradictory[1] ≥ lower_bounds[1] - 1e-12
+    end
+
+    @testset "smoothed split/merge oracle" begin
+        e_smooth = ForecastFlows.SplitMergeEdge([1, 2, 3], 100.0; μ=0.01)
+        x = zeros(3)
+
+        # Large gap → saturates at B (linear regime)
+        ForecastFlows.find_arb!(x, e_smooth, [0.5, 0.8, 0.9])
+        @test x[1] ≈ -100.0
+        @test x[2] ≈ 100.0
+
+        # Small gap → smoothed intermediate flow (quadratic regime)
+        # gap = 0.502 + 0.502 - 1.0 = 0.004, w = 0.004/0.01 = 0.4
+        ForecastFlows.find_arb!(x, e_smooth, [1.0, 0.502, 0.502])
+        @test x[1] ≈ -0.4 atol=1e-10
+
+        # Zero gap → zero flow
+        ForecastFlows.find_arb!(x, e_smooth, [1.0, 0.5, 0.5])
+        @test all(x .≈ 0.0)
+
+        # Nonsmooth flag
+        @test !ForecastFlows.is_nonsmooth(e_smooth)
+        @test ForecastFlows.is_nonsmooth(ForecastFlows.SplitMergeEdge([1, 2, 3], 100.0))
+
+        # μ=0 default preserves original behavior
+        e_exact = ForecastFlows.SplitMergeEdge([1, 2, 3], 100.0)
+        @test e_exact.μ == 0.0
     end
 
     @testset "smooth solver parity" begin
@@ -1911,12 +1954,16 @@ end
             mixed_holdings0 = [outcome.initial_holding for outcome in mixed_problem.outcomes]
             mixed_values = [outcome.fair_value for outcome in mixed_problem.outcomes]
 
+            # The facade uses Moreau-Yosida smoothing (μ > 0) while the low-level
+            # solver uses the exact oracle (μ = 0), so numerical values may differ
+            # by O(μ). The parity test validates structural correctness of field
+            # extraction, not bit-for-bit numerical match.
             @test mixed_result.status == "uncertified"
-            @test mixed_result.final_collateral ≈ mixed_problem.collateral_balance + mixed_solver.y[1] atol=1e-8
-            @test mixed_result.final_holdings ≈ mixed_holdings0 .+ mixed_solver.y[2:end] atol=1e-8
-            @test mixed_result.final_ev ≈ mixed_problem.collateral_balance + dot(mixed_values, mixed_holdings0) + primal_objective(mixed_solver) atol=1e-8
-            @test mixed_result.split_merge.mint ≈ 5.0 atol=1e-8
-            @test mixed_result.split_merge.merge ≈ 0.0 atol=1e-8
+            @test mixed_result.final_collateral ≈ mixed_problem.collateral_balance + mixed_solver.y[1] atol=1e-5
+            @test mixed_result.final_holdings ≈ mixed_holdings0 .+ mixed_solver.y[2:end] atol=1e-5
+            @test mixed_result.final_ev ≈ mixed_problem.collateral_balance + dot(mixed_values, mixed_holdings0) + primal_objective(mixed_solver) atol=1e-5
+            @test mixed_result.split_merge.mint ≈ 5.0 atol=1e-2
+            @test mixed_result.split_merge.merge ≈ 0.0 atol=1e-2
         end
 
         @testset "release guardrails" begin
@@ -1964,27 +2011,22 @@ end
                     ConstantProductMarketSpec("m2", "NO", 70.0, 100.0, 1.0),
                 ],
             )
-            let err = try
-                    solve_prediction_market(default_mixed_problem; mode=:mixed_enabled, solver_options=facade_solver_options)
-                    nothing
-                catch err
-                    err
-                end
-                @test err isa ForecastFlows._PredictionMarketSolveFailed
-                @test occursin("failed certification", sprint(showerror, err))
-            end
+            # The doubling loop now returns the best certified result from an earlier
+            # iteration when later doublings fail certification, so this should succeed.
+            default_result = solve_prediction_market(default_mixed_problem; mode=:mixed_enabled, solver_options=facade_solver_options)
+            @test default_result.status == "certified"
 
-            unsafe_result = solve_prediction_market(
+            safe_result = solve_prediction_market(
                 default_mixed_problem;
                 mode=:mixed_enabled,
                 throw_on_fail=false,
                 solver_options=facade_solver_options,
             )
-            @test unsafe_result.status == "uncertified"
-            encoded = JSON3.write(unsafe_result)
+            @test safe_result.status == "certified"
+            encoded = JSON3.write(safe_result)
             parsed = JSON3.read(encoded)
-            @test isnothing(parsed.certificate.primal_value)
-            @test isnothing(parsed.certificate.duality_gap)
+            @test !isnothing(parsed.certificate.primal_value)
+            @test !isnothing(parsed.certificate.duality_gap)
 
             zero_balance_problem = PredictionMarketProblem(
                 [
@@ -2185,13 +2227,13 @@ end
 
             merge_problem = PredictionMarketProblem(
                 [
-                    OutcomeSpec("YES", 0.45, 0.0),
-                    OutcomeSpec("NO", 0.55, 0.0),
+                    OutcomeSpec("YES", 0.15, 3.0),
+                    OutcomeSpec("NO", 0.15, 3.0),
                 ],
-                1.0,
+                0.0,
                 [
-                    ConstantProductMarketSpec("m1", "YES", 70.0, 100.0, 1.0),
-                    ConstantProductMarketSpec("m2", "NO", 30.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m1", "YES", 20.0, 100.0, 1.0),
+                    ConstantProductMarketSpec("m2", "NO", 20.0, 100.0, 1.0),
                 ];
                 split_bound=5.0,
             )
@@ -2423,6 +2465,103 @@ end
                 @test benchmark_best_family(direct_public.net_ev, mixed_public.net_ev) == expected_family
                 @test expected.best_family == expected_family
             end
+        end
+
+        @testset "public pathological mixed continuation regression" begin
+            weights = [180, 165, 150, 120, 118, 116, 114, 112, 110, 108, 106, 104, 102, 100, 98, 96, 94, 60]
+            predictions = [w / sum(weights) for w in weights]
+            current_prices = let
+                factors = zeros(Float64, length(weights))
+                for idx in 0:(length(weights) - 1)
+                    if idx < 3
+                        factors[idx + 1] = (3150 + idx * 140) / 10_000.0
+                    elseif idx < 17
+                        factors[idx + 1] = (6900 + ((idx - 3) % 6) * 105) / 10_000.0
+                    else
+                        factors[idx + 1] = 14500 / 10_000.0
+                    end
+                end
+                [predictions[i] * factors[i] for i in 1:length(weights)]
+            end
+
+            function outcome_price_from_tick_local(tick::Integer, is_token1::Bool)
+                return setprecision(BigFloat, 256) do
+                    sqrt_price_x96 = (big"1.0001" ^ (BigFloat(tick) / big(2))) * (BigFloat(2) ^ 96)
+                    price = (sqrt_price_x96 / (BigFloat(2) ^ 96))^2
+                    Float64(is_token1 ? inv(price) : price)
+                end
+            end
+
+            buy_limit = outcome_price_from_tick_local(1, true)
+            sell_limit = outcome_price_from_tick_local(92_108, true)
+            liquidities = zeros(Float64, length(weights))
+            for idx in 0:(length(weights) - 1)
+                if idx < 3
+                    liquidities[idx + 1] = 8000.0 + idx * 850.0
+                elseif idx < 17
+                    liquidities[idx + 1] = 90.0 + idx * 7.0
+                else
+                    liquidities[idx + 1] = 2200.0 + idx * 120.0
+                end
+            end
+
+            pathological_problem = PredictionMarketProblem(
+                [OutcomeSpec(string(i), predictions[i], 0.0) for i in 1:length(weights)],
+                6.5,
+                [
+                    UniV3MarketSpec(
+                        "m$(i)",
+                        string(i),
+                        current_prices[i],
+                        [
+                            UniV3LiquidityBand(buy_limit, liquidities[i]),
+                            UniV3LiquidityBand(sell_limit, 0.0),
+                        ],
+                        0.9999,
+                    )
+                    for i in 1:length(weights)
+                ],
+            )
+
+            pathological_workspace = ForecastFlows.PredictionMarketWorkspace(pathological_problem)
+            direct_result = ForecastFlows.solve_prediction_market!(
+                pathological_workspace,
+                pathological_problem;
+                mode=:direct_only,
+                certify=true,
+                throw_on_fail=false,
+                solver_options=(; pgtol=1e-6, max_iter=10_000, max_fun=20_000),
+            )
+            mixed_result = ForecastFlows.solve_prediction_market!(
+                pathological_workspace,
+                pathological_problem;
+                mode=:mixed_enabled,
+                certify=true,
+                throw_on_fail=false,
+                max_doublings=6,
+                solver_options=(; pgtol=1e-6, max_iter=10_000, max_fun=20_000),
+            )
+
+            @test direct_result.status == "certified"
+            @test mixed_result.status == "certified"
+            @test mixed_result.final_ev > 100.0
+            @test mixed_result.final_ev > direct_result.final_ev + 80.0
+            @test mixed_result.split_merge.merge > 150.0
+
+            mixed_solver = getfield(pathological_workspace, :mixed_solver)
+            @test !isnothing(mixed_solver)
+            @test !isnothing(mixed_solver.certificate)
+            @test mixed_solver.certificate.passed
+
+            solver_final_holdings = [outcome.initial_holding for outcome in pathological_problem.outcomes] .+ mixed_solver.y[2:end]
+            solver_final_ev = pathological_problem.collateral_balance +
+                mixed_solver.y[1] +
+                dot([outcome.fair_value for outcome in pathological_problem.outcomes], solver_final_holdings)
+            @test solver_final_ev ≈ mixed_result.final_ev atol=1e-6
+
+            split_flow = mixed_solver.xs[end]
+            solver_merge = max(-(sum(@view split_flow[2:end]) / (length(split_flow) - 1)), 0.0)
+            @test solver_merge ≈ mixed_result.split_merge.merge atol=1e-6
         end
 
         @testset "workspace hot loop" begin
@@ -2919,9 +3058,11 @@ end
 
             @test responses[7].ok
             @test responses[7].request_id == "uncertified-json"
-            @test responses[7].result.status == "uncertified"
-            @test isnothing(responses[7].result.certificate.primal_value)
-            @test isnothing(responses[7].result.certificate.duality_gap)
+            # The doubling loop returns the best certified result from an earlier
+            # iteration when later doublings fail, so this is now certified.
+            @test responses[7].result.status == "certified"
+            @test !isnothing(responses[7].result.certificate.primal_value)
+            @test !isnothing(responses[7].result.certificate.duality_gap)
 
             @test responses[8].ok
             @test responses[8].request_id == "gas-solve"
@@ -2992,7 +3133,9 @@ end
             @test !responses[21].ok
             @test responses[21].request_id == "solve-failed"
             @test responses[21].error.code == "solve_failed"
-            @test occursin("failed certification", String(responses[21].error.message))
+            # With max_doublings=0 and max_iter=1, the solver can't converge.
+            # The doubling loop keeps trying larger bounds but never certifies.
+            @test occursin("never certified", String(responses[21].error.message))
 
             malformed_response = JSON3.read(String(read(pipeline(IOBuffer("{\n"), cmd), String)))
             @test !malformed_response.ok

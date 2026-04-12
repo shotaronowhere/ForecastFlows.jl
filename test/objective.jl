@@ -101,11 +101,50 @@ end
     @test U(zero_endowment, y) ≈ U(linear, y) atol=obj_tol
     @test Ubar(zero_endowment, ν) ≈ Ubar(linear, ν) atol=obj_tol
 
+    # When ν ≈ c, no coordinates are pinned
     target = zeros(3)
     fixed = trues(3)
-    ForecastFlows.recovery_targets!(target, fixed, obj, ν)
+    ν_at_c = obj.c .+ 0.0  # exactly at c
+    ForecastFlows.recovery_targets!(target, fixed, obj, ν_at_c)
     @test target == zeros(3)
     @test fixed == falses(3)
+
+    # Correct recovery_targets! behavior: pinned coordinates
+    let
+        obj2 = EndowmentLinear([1.0, 0.3, 0.7], [100.0, 50.0, 25.0])
+        ν2 = [1.0, 0.8, 0.7]  # ν[2] > c[2], ν[1] ≈ c[1], ν[3] ≈ c[3]
+        target2 = zeros(3)
+        fixed2 = falses(3)
+        ForecastFlows.recovery_targets!(target2, fixed2, obj2, ν2)
+        @test fixed2[2] == true
+        @test target2[2] ≈ -50.0
+        @test fixed2[1] == false
+        @test fixed2[3] == false
+    end
+
+    # Integration: recovery_targets! enables correct split/merge recovery
+    let
+        # 3 assets: collateral (1), outcome A (2), outcome B (3)
+        # User wants to buy outcome A, holding 100 collateral
+        c = [1.0, 2.0, 1.0]   # values outcome A at 2x collateral
+        h0 = [100.0, 0.0, 0.0]
+        obj = EndowmentLinear(c, h0)
+
+        # Simulate dual prices where ν_A > c_A (outcome A overpriced in dual)
+        ν_high = [1.0, 2.5, 1.0]
+        target_h = zeros(3)
+        fixed_h = falses(3)
+        ForecastFlows.recovery_targets!(target_h, fixed_h, obj, ν_high)
+        @test fixed_h == [false, true, false]
+        @test target_h[2] ≈ 0.0  # h0[2]=0, so target = -0 = 0
+
+        # Simulate dual prices where all ν ≈ c (on face)
+        ν_face = [1.0 + 1e-12, 2.0 - 1e-12, 1.0 + 1e-12]
+        target_f = zeros(3)
+        fixed_f = falses(3)
+        ForecastFlows.recovery_targets!(target_f, fixed_f, obj, ν_face)
+        @test fixed_f == [false, false, false]
+    end
 end
 
 @testset "basket liquidation" begin
