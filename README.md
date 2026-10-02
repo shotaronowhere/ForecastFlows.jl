@@ -25,17 +25,7 @@ The prediction-market router models:
 This lets the solver discover direct and synthetic routes from shadow-price
 equilibration instead of explicit path enumeration.
 
-## Install v2.0.0
-
-Once `v2.0.0` is tagged, install the source release directly:
-
-```julia
-using Pkg
-
-Pkg.add(url="https://github.com/shotaronowhere/ForecastFlows.jl", rev="v2.0.0")
-```
-
-For local development in a checkout, use `Pkg.develop(path=pwd())`.
+## Supported surfaces
 
 The supported v2 dependency surfaces are:
 
